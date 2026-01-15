@@ -1,21 +1,62 @@
 # Gemini Terminal
 
-This project is a terminal application developed based on the principles outlined in [GEMINI.md](./GEMINI.md).
+## Introduction
+Gemini Terminal is a lightweight, high-performance standalone terminal emulator built with Rust. Designed with the UNIX philosophy in mind—"never interrupt thinking" and "never make the user wait"—it operates as an independent graphical window, offering smooth asynchronous command execution and flexible customization via Lua.
 
-## Development Environment
+[日本語版のREADMEはこちら (Japanese version)](README.jp.md)
 
-*   **OS:** Windows
-*   **Language:** Rust (Latest version)
+## Technologies Used
+- **Language**: [Rust](https://www.rust-lang.org/) (Safety and ultra-fast performance)
+- **GUI Framework**: [eframe / egui](https://github.com/emilk/egui) (Low-latency rendering via Immediate Mode GUI)
+- **Lua Parser**: [full_moon](https://github.com/Hajime-S/full_moon) (AST analysis for clean, side-effect-free configuration loading)
+- **Asynchronous Communication**: [crossbeam-channel](https://github.com/crossbeam-rs/crossbeam) (Smooth I/O management without blocking the UI thread)
 
-## Setup
+## Features
+- **Standalone UI**: An independent rendering engine not bound by OS standard consoles.
+- **Inline Terminal Flow**: A seamless vertical CLI experience where the prompt and history are unified.
+- **Lua-based Configuration**: Hot-reloadable settings for prompt text, colors, and window metadata.
+- **Async Execution**: Non-blocking execution for long-running commands (e.g., `ping`, `dir /s`).
+- **Robust Argument Parsing**: A custom tokenizer that correctly handles single/double quotes and backslash escapes.
 
-1.  Install Rust: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-2.  Verify installation:
-    ```sh
-    rustc --version
-    cargo --version
-    ```
+## What You Can Do
+- **Advanced Customization**:
+  - `gemini_prompt`: Change the shell prompt string.
+  - `gemini_prompt_color`: Change the prompt color using HEX strings (e.g., `"#00FFFF"`).
+  - `gemini_text_color`: Change the general output text color.
+  - `gemini_window_title`: Set a custom application window title.
+- **Flexible Command Interaction**:
+  - Transparent execution of external commands.
+  - Built-in management commands (`config load`, `cd`, `echo`, `exit`).
+- **Optimized Experience**:
+  - Immediate submission via Enter key.
+  - Support for empty line submission to navigate the terminal naturally.
 
-## Dependencies
+## Development Process
+1. **Phase 1: Foundations**: Implemented a basic REPL loop and external process execution in Rust.
+2. **Phase 2: Advanced Parsing**: Built a robust tokenizer for UNIX-like argument handling.
+3. **Phase 3: Lua Integration**: Integrated `full_moon` for static AST-based configuration parsing.
+4. **Phase 4: GUI Transition**: Transitioned to a full graphical UI using `eframe` with asynchronous worker threads.
+5. **Phase 5: Polish**: Refined the inline input flow, implemented color support, and optimized for MSVC toolchain.
 
-Dependencies will be added to `Cargo.toml` as needed.
+## How to Build
+
+### Prerequisites
+- [Rust (stable-x86_64-pc-windows-msvc)](https://www.rust-lang.org/tools/install)
+- Visual Studio Build Tools (with "Desktop development with C++" workload)
+
+### Build Steps
+1. Navigate to the project directory.
+2. Build the release binary:
+   ```powershell
+   cargo build --release
+   ```
+3. Find the executable at:
+   ```text
+   target/release/terminal.exe
+   ```
+
+### Running the App
+```powershell
+./target/release/terminal.exe
+```
+Try running `config load full_config.lua` after startup to experience the customized settings.

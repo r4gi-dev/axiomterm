@@ -73,22 +73,55 @@ fn tokenize_command(input: &str) -> Vec<String> {
     tokens
 }
 
-fn parse_config(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        if let Ok(r) = u8::from_str_radix(&hex[0..2], 16) {
+            if let Ok(g) = u8::from_str_radix(&hex[2..4], 16) {
+                if let Ok(b) = u8::from_str_radix(&hex[4..6], 16) {
+                    return Some(egui::Color32::from_rgb(r, g, b));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct ConfigUpdate {
+    prompt: Option<String>,
+    prompt_color: Option<egui::Color32>,
+    text_color: Option<egui::Color32>,
+    window_title: Option<String>,
+}
+
+fn parse_config(path: &str) -> Result<ConfigUpdate, Box<dyn std::error::Error>> {
     let code = std::fs::read_to_string(path)?;
-    let ast = full_moon::parse(&code).map_err(|e| {
-        let msg = e.into_iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
-        format!("Parse error: {}", msg)
-    })?;
+    let ast = match full_moon::parse(&code) {
+        Ok(ast) => ast,
+        Err(e) => {
+            let msg = e.into_iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+            return Err(format!("Parse error: {}", msg).into());
+        }
+    };
+
+    let mut update = ConfigUpdate::default();
 
     for stmt in ast.nodes().stmts() {
         if let full_moon::ast::Stmt::Assignment(assign) = stmt {
             for (var, expr) in assign.variables().iter().zip(assign.expressions().iter()) {
-                 if var.to_string().trim() == "gemini_prompt" {
-                     if let full_moon::ast::Expression::String(s) = expr {
-                         let val = s.token().to_string(); 
-                         if val.len() >= 2 {
-                             let unquoted = val[1..val.len()-1].to_string();
-                             return Ok(unquoted);
+                 let var_name_owned = var.to_string();
+                 let var_name = var_name_owned.trim();
+                 if let full_moon::ast::Expression::String(s) = expr {
+                     let val = s.token().to_string(); 
+                     if val.len() >= 2 {
+                         let unquoted = val[1..val.len()-1].to_string();
+                         match var_name {
+                             "gemini_prompt" => update.prompt = Some(unquoted),
+                             "gemini_prompt_color" => update.prompt_color = parse_hex_color(&unquoted),
+                             "gemini_text_color" => update.text_color = parse_hex_color(&unquoted),
+                             "gemini_window_title" => update.window_title = Some(unquoted),
+                             _ => {}
                          }
                      }
                  }
@@ -96,13 +129,17 @@ fn parse_config(path: &str) -> Result<String, Box<dyn std::error::Error>> {
         }
     }
     
-    Ok(String::new())
+    Ok(update)
 }
 
 // --- App State & GUI ---
 
 struct ShellState {
     prompt: String,
+    prompt_color: egui::Color32,
+    text_color: egui::Color32,
+    window_title: String,
+    title_updated: bool,
 }
 
 struct TerminalApp {
@@ -120,6 +157,10 @@ impl TerminalApp {
 
         let state = Arc::new(Mutex::new(ShellState {
             prompt: "> ".to_string(),
+            prompt_color: egui::Color32::GREEN,
+            text_color: egui::Color32::LIGHT_GRAY,
+            window_title: "Gemini Terminal".to_string(),
+            title_updated: false,
         }));
         let thread_state = Arc::clone(&state);
 
@@ -165,13 +206,16 @@ impl TerminalApp {
                          if args.len() >= 2 && args[0] == "load" {
                             let path = &args[1];
                             match parse_config(path) {
-                                Ok(new_prompt) => {
-                                    if !new_prompt.is_empty() {
-                                        thread_state.lock().unwrap().prompt = new_prompt;
-                                        let _ = output_tx.send("Config loaded. Prompt updated.".to_string());
-                                    } else {
-                                        let _ = output_tx.send("Config loaded, but no 'gemini_prompt' found.".to_string());
+                                Ok(update) => {
+                                    let mut s = thread_state.lock().unwrap();
+                                    if let Some(p) = update.prompt { s.prompt = p; }
+                                    if let Some(pc) = update.prompt_color { s.prompt_color = pc; }
+                                    if let Some(tc) = update.text_color { s.text_color = tc; }
+                                    if let Some(wt) = update.window_title { 
+                                        s.window_title = wt; 
+                                        s.title_updated = true;
                                     }
+                                    let _ = output_tx.send("Config loaded.".to_string());
                                 }
                                 Err(e) => {
                                     let _ = output_tx.send(format!("Failed to load config: {}", e));
@@ -185,11 +229,10 @@ impl TerminalApp {
                         match Command::new(command_name)
                             .args(args)
                             .stdout(Stdio::piped())
-                            .stderr(Stdio::piped()) // Merge stderr? Or separate? 
+                            .stderr(Stdio::piped())
                             .spawn() 
                         {
                             Ok(mut child) => {
-                                // Stream stdout
                                 if let Some(stdout) = child.stdout.take() {
                                     let out_tx = output_tx.clone();
                                     thread::spawn(move || {
@@ -202,20 +245,19 @@ impl TerminalApp {
                                     });
                                 }
                                 
-                                // Stream stderr
                                 if let Some(stderr) = child.stderr.take() {
                                      let out_tx = output_tx.clone();
                                     thread::spawn(move || {
                                         let reader = BufReader::new(stderr);
                                         for line in reader.lines() {
                                             if let Ok(l) = line {
-                                                let _ = out_tx.send(l); // Maybe prefix with error color?
+                                                let _ = out_tx.send(l);
                                             }
                                         }
                                     });
                                 }
 
-                                let _ = child.wait(); // Wait for finish
+                                let _ = child.wait();
                             }
                             Err(_) => {
                                 let _ = output_tx.send("program not found".to_string());
@@ -243,25 +285,38 @@ impl eframe::App for TerminalApp {
             self.history.push(msg);
         }
 
+        // Check for window title update
+        {
+            let mut s = self.shell_state.lock().unwrap();
+            if s.title_updated {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(s.window_title.clone()));
+                s.title_updated = false;
+            }
+        }
+
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(egui::Color32::from_black_alpha(255)))
             .show(ctx, |ui| {
                 ui.style_mut().visuals.extreme_bg_color = egui::Color32::BLACK;
                 ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLACK;
                 
+                let (prompt_text, prompt_color, text_color) = {
+                    let s = self.shell_state.lock().unwrap();
+                    (s.prompt.clone(), s.prompt_color, s.text_color)
+                };
+
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         // History
                         for line in &self.history {
-                            ui.label(egui::RichText::new(line).monospace().color(egui::Color32::LIGHT_GRAY));
+                            ui.label(egui::RichText::new(line).monospace().color(text_color));
                         }
 
                         // Current Prompt/Input Line
                         ui.horizontal(|ui| {
-                            let prompt_text = { self.shell_state.lock().unwrap().prompt.clone() };
-                            ui.label(egui::RichText::new(prompt_text).monospace().color(egui::Color32::GREEN).strong());
+                            ui.label(egui::RichText::new(prompt_text).monospace().color(prompt_color).strong());
                             
                             let re = ui.add(egui::TextEdit::singleline(&mut self.input)
                                 .desired_width(ui.available_width())
@@ -270,22 +325,17 @@ impl eframe::App for TerminalApp {
                                 .text_color(egui::Color32::WHITE)
                                 .lock_focus(true));
                             
-                            // Auto-focus the input
                             re.request_focus();
 
-                            // Submit when Enter is pressed
                             if re.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 let cmd = std::mem::take(&mut self.input);
                                 let _ = self.command_tx.send(cmd);
-                                // Request focus immediately for the next prompt
                                 re.request_focus();
                             }
                         });
                     });
             });
 
-        // Repaint constantly to see updates immediately? Or use request_repaint only when needed?
-        // For a terminal, output can come anytime.
         ctx.request_repaint();
     }
 }
@@ -349,5 +399,12 @@ mod tests {
         let input = "echo \"\"";
         let tokens = tokenize_command(input);
         assert_eq!(tokens, vec!["echo", ""]);
+    }
+
+    #[test]
+    fn test_hex_parsing() {
+        assert_eq!(parse_hex_color("#FF0000"), Some(egui::Color32::from_rgb(255, 0, 0)));
+        assert_eq!(parse_hex_color("00FF00"), Some(egui::Color32::from_rgb(0, 255, 0)));
+        assert_eq!(parse_hex_color("invalid"), None);
     }
 }
