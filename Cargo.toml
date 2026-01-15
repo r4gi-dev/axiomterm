@@ -1,0 +1,8 @@
+[package]
+name = "terminal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+full_moon = "2.1.0"
+ctrlc = "3.4"
