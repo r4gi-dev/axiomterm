@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 full_moon = "2.1.0"
-ctrlc = "3.4"
+eframe = "0.29"
+crossbeam-channel = "0.5"
