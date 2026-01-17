@@ -124,6 +124,12 @@ impl LogLine {
     }
 }
 
+#[derive(Clone, Debug)]
+enum ShellEvent {
+    Output(LogLine),
+    Clear,
+}
+
 // --- Shortcuts & Modes ---
 
 #[derive(Clone, Debug, PartialEq)]
@@ -276,13 +282,13 @@ struct TerminalApp {
     history: Vec<LogLine>,
     shell_state: Arc<Mutex<ShellState>>,
     command_tx: Sender<String>,
-    output_rx: Receiver<LogLine>,
+    output_rx: Receiver<ShellEvent>,
 }
 
 impl TerminalApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let (command_tx, command_rx) = unbounded::<String>();
-        let (output_tx, output_rx) = unbounded::<LogLine>();
+        let (output_tx, output_rx) = unbounded::<ShellEvent>();
 
         let current_dir = env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
@@ -317,7 +323,7 @@ impl TerminalApp {
                     let s = thread_state.lock().unwrap();
                     (s.prompt.clone(), s.prompt_color)
                 };
-                let _ = output_tx.send(LogLine::new(format!("{}{}", prompt, cmd_line), prompt_color));
+                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("{}{}", prompt, cmd_line), prompt_color)));
 
                 let cmd_line = cmd_line.trim();
                 if cmd_line.is_empty() {
@@ -344,15 +350,74 @@ impl TerminalApp {
                         let new_dir = args.get(0).map_or("/", |x| x.as_str());
                         let root = std::path::Path::new(new_dir);
                         if let Err(e) = env::set_current_dir(&root) {
-                            let _ = output_tx.send(LogLine::new(format!("Error: {}", e), egui::Color32::RED));
+                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("Error: {}", e), egui::Color32::RED)));
                         } else if let Ok(cwd) = env::current_dir() {
                             let new_cwd_str = cwd.to_string_lossy().to_string();
                             thread_state.lock().unwrap().current_dir = new_cwd_str;
                         }
                     }
+                    "pwd" => {
+                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(current_dir.clone(), text_color)));
+                    }
+                    "clear" => {
+                        let _ = output_tx.send(ShellEvent::Clear);
+                    }
                     "echo" => {
                         let output = args.join(" ");
-                        let _ = output_tx.send(LogLine::new(output, text_color));
+                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(output, text_color)));
+                    }
+                    "mkdir" => {
+                        for path in args {
+                            if let Err(e) = std::fs::create_dir_all(path) {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("mkdir: {}: {}", path, e), egui::Color32::RED)));
+                            }
+                        }
+                    }
+                    "touch" => {
+                        for path in args {
+                            if let Err(e) = std::fs::OpenOptions::new().create(true).write(true).open(path) {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("touch: {}: {}", path, e), egui::Color32::RED)));
+                            }
+                        }
+                    }
+                    "cat" => {
+                        for path in args {
+                            match std::fs::read_to_string(path) {
+                                Ok(content) => {
+                                    for line in content.lines() {
+                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(line, text_color)));
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("cat: {}: {}", path, e), egui::Color32::RED)));
+                                }
+                            }
+                        }
+                    }
+                    "rm" => {
+                        for path in args {
+                            if let Err(e) = std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path)) {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("rm: {}: {}", path, e), egui::Color32::RED)));
+                            }
+                        }
+                    }
+                    "mv" => {
+                        if args.len() == 2 {
+                            if let Err(e) = std::fs::rename(&args[0], &args[1]) {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("mv: {}", e), egui::Color32::RED)));
+                            }
+                        } else {
+                            let _ = output_tx.send(ShellEvent::Output(LogLine::new("Usage: mv <source> <dest>", text_color)));
+                        }
+                    }
+                    "cp" => {
+                        if args.len() == 2 {
+                            if let Err(e) = std::fs::copy(&args[0], &args[1]) {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("cp: {}", e), egui::Color32::RED)));
+                            }
+                        } else {
+                            let _ = output_tx.send(ShellEvent::Output(LogLine::new("Usage: cp <source> <dest>", text_color)));
+                        }
                     }
                     "ls" => {
                         let mut show_all = false;
@@ -390,20 +455,20 @@ impl TerminalApp {
                                         if long_format {
                                             let type_indicator = if is_dir { "<DIR>" } else { "     " };
                                             let size = metadata.len();
-                                            let _ = output_tx.send(LogLine::new(
+                                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                                 format!("{} {:>12} {}", type_indicator, size, file_name),
                                                 line_color
-                                            ));
+                                            )));
                                         } else {
-                                            let _ = output_tx.send(LogLine::new(file_name, line_color));
+                                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(file_name, line_color)));
                                         }
                                     } else {
-                                        let _ = output_tx.send(LogLine::new(file_name, text_color));
+                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(file_name, text_color)));
                                     }
                                 }
                             }
                             Err(e) => {
-                                let _ = output_tx.send(LogLine::new(format!("ls: {}: {}", target_path, e), egui::Color32::RED));
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("ls: {}: {}", target_path, e), egui::Color32::RED)));
                             }
                         }
                     }
@@ -415,7 +480,7 @@ impl TerminalApp {
                                 match get_default_config_path() {
                                     Some(p) => p,
                                     None => {
-                                        let _ = output_tx.send(LogLine::new("Error: Could not determine default config path".to_string(), egui::Color32::RED));
+                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new("Error: Could not determine default config path".to_string(), egui::Color32::RED)));
                                         continue;
                                     }
                                 }
@@ -462,16 +527,16 @@ impl TerminalApp {
                                     }
 
                                     if let Some(e) = cwd_error {
-                                        let _ = output_tx.send(LogLine::new(e, egui::Color32::RED));
+                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(e, egui::Color32::RED)));
                                     }
-                                    let _ = output_tx.send(LogLine::new(format!("Config loaded from: {}", path.display()), egui::Color32::GOLD));
+                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("Config loaded from: {}", path.display()), egui::Color32::GOLD)));
                                 }
                                 Err(e) => {
-                                    let _ = output_tx.send(LogLine::new(format!("Failed to load config at {}: {}", path.display(), e), egui::Color32::RED));
+                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(format!("Failed to load config at {}: {}", path.display(), e), egui::Color32::RED)));
                                 }
                             }
                         } else {
-                            let _ = output_tx.send(LogLine::new("Usage: config load [path]".to_string(), text_color));
+                            let _ = output_tx.send(ShellEvent::Output(LogLine::new("Usage: config load [path]".to_string(), text_color)));
                         }
                     }
                     command_name => {
@@ -488,7 +553,7 @@ impl TerminalApp {
                                         let reader = BufReader::new(stdout);
                                         for line in reader.lines() {
                                             if let Ok(l) = line {
-                                                let _ = out_tx.send(LogLine::new(l, text_color));
+                                                let _ = out_tx.send(ShellEvent::Output(LogLine::new(l, text_color)));
                                             }
                                         }
                                     });
@@ -500,7 +565,7 @@ impl TerminalApp {
                                         let reader = BufReader::new(stderr);
                                         for line in reader.lines() {
                                             if let Ok(l) = line {
-                                                let _ = out_tx.send(LogLine::new(l, egui::Color32::RED));
+                                                let _ = out_tx.send(ShellEvent::Output(LogLine::new(l, egui::Color32::RED)));
                                             }
                                         }
                                     });
@@ -509,7 +574,7 @@ impl TerminalApp {
                                 let _ = child.wait();
                             }
                             Err(_) => {
-                                let _ = output_tx.send(LogLine::new("program not found".to_string(), egui::Color32::RED));
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new("program not found".to_string(), egui::Color32::RED)));
                             }
                         }
                     }
@@ -530,8 +595,11 @@ impl TerminalApp {
 impl eframe::App for TerminalApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll for new output
-        while let Ok(line) = self.output_rx.try_recv() {
-            self.history.push(line);
+        while let Ok(event) = self.output_rx.try_recv() {
+            match event {
+                ShellEvent::Output(line) => self.history.push(line),
+                ShellEvent::Clear => self.history.clear(),
+            }
         }
 
         // Global Key Intercept

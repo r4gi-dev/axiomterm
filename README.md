@@ -46,6 +46,20 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
 - **Standard Config Path**:
   - The default configuration file is located at `%USERPROFILE%\.config\gemini\config.lua`.
   - Running `config load` without arguments will look for this file.
+  - **Built-in Command Reference**:
+  - `config load [path]`: Reloads the configuration from a file.
+  - `ls [-a] [-l] [path]`: List directory contents with colorization.
+  - `cd <path>`: Change the current working directory.
+  - `pwd`: Print the current working directory.
+  - `clear`: Clear the terminal history.
+  - `mkdir <path>`: Create a new directory.
+  - `touch <path>`: Create a new empty file.
+  - `cat <path>`: Display file contents.
+  - `rm <path>`: Remove a file or empty directory.
+  - `mv <src> <dest>`: Rename or move a file/directory.
+  - `cp <src> <dest>`: Copy a file.
+  - `echo [text]`: Print text to the terminal.
+  - `exit`: Close the terminal.
 - **Optimized Experience**:
   - Immediate submission via Enter key.
   - Support for empty line submission to navigate the terminal naturally.
