@@ -8,6 +8,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::SystemTime;
 
 pub fn spawn_shell_thread(
     command_rx: Receiver<String>,
@@ -87,11 +88,21 @@ pub fn spawn_shell_thread(
                 }
                 "touch" => {
                     for path in args {
-                        if let Err(e) = std::fs::OpenOptions::new().create(true).write(true).open(path) {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("touch: {}: {}", path, e),
-                                egui::Color32::RED,
-                            )));
+                        match std::fs::OpenOptions::new().create(true).write(true).open(path) {
+                            Ok(_) => {
+                                if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::from_system_time(SystemTime::now())) {
+                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
+                                        format!("touch (mtime): {}: {}", path, e),
+                                        egui::Color32::RED,
+                                    )));
+                                }
+                            }
+                            Err(e) => {
+                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(
+                                    format!("touch: {}: {}", path, e),
+                                    egui::Color32::RED,
+                                )));
+                            }
                         }
                     }
                 }
