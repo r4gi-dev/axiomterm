@@ -15,16 +15,31 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
 - **Standalone UI**: An independent rendering engine not bound by OS standard consoles.
 - **Inline Terminal Flow**: A seamless vertical CLI experience where the prompt and history are unified.
 - **Lua-based Configuration**: Hot-reloadable settings for prompt text, colors, and window metadata.
+- **Directory Display**: A dedicated status bar at the top showing the real-time working directory.
 - **Async Execution**: Non-blocking execution for long-running commands (e.g., `ping`, `dir /s`).
 - **Robust Argument Parsing**: A custom tokenizer that correctly handles single/double quotes and backslash escapes.
 
 ## What You Can Do
 - **Advanced Customization**:
-  - `gemini_prompt`: Change the shell prompt string.
-  - `gemini_prompt_color`: Change the prompt color using HEX strings (e.g., `"#00FFFF"`).
-  - `gemini_text_color`: Change the general output text color.
-  - `gemini_window_title`: Set a custom application window title.
-- **Flexible Command Interaction**:
+  - `config.font_size`: Set the terminal font size (e.g., `16.0`).
+  - `config.window_background_opacity`: Set window transparency (e.g., `0.85`).
+  - `config.prompt`: Change the shell prompt string.
+  - `config.prompt_color`: Change the prompt color using HEX strings (e.g., `"#00FFFF"`).
+  - `config.text_color`: Change the general output text color.
+  - `config.window_title`: Set a custom application window title.
+  - `config.default_cwd`: Set the starting directory (e.g., `"C:/"`).
+  - `config.keys`: Define custom shortcuts using a list of tables.
+- **Example Config (Object Style)**:
+  ```lua
+  local config = {}
+  config.font_size = 14.0
+  config.window_background_opacity = 0.9
+  config.prompt = "gemini> "
+  config.keys = {
+      { key = "h", cmd = "cd .." },
+  }
+  return config
+  ```
   - Transparent execution of external commands.
   - Built-in management commands (`config load`, `cd`, `echo`, `exit`).
 - **Optimized Experience**:
@@ -59,4 +74,4 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
 ```powershell
 ./target/release/terminal.exe
 ```
-Try running `config load full_config.lua` after startup to experience the customized settings.
+Try running `config load config.lua` after startup to experience the customized settings.

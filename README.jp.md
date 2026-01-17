@@ -56,4 +56,4 @@ Gemini Terminalは、「思考を中断させない」「操作を待たせな�
 ```powershell
 ./target/release/terminal.exe
 ```
-起動後、`config load full_config.lua`を実行することで、カスタマイズされた設定を体験できます。
+起動後、`config load config.lua`を実行することで、カスタマイズされた設定を体験できます。
