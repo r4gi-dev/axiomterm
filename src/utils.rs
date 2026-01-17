@@ -1,4 +1,4 @@
-use eframe::egui;
+use crate::types::TerminalColor;
 use std::env;
 use std::path::PathBuf;
 
@@ -86,13 +86,13 @@ pub fn tokenize_command(input: &str) -> Vec<String> {
     tokens
 }
 
-pub fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
+pub fn parse_hex_color(hex: &str) -> Option<TerminalColor> {
     let hex = hex.trim_start_matches('#');
     if hex.len() == 6 {
         if let Ok(r) = u8::from_str_radix(&hex[0..2], 16) {
             if let Ok(g) = u8::from_str_radix(&hex[2..4], 16) {
                 if let Ok(b) = u8::from_str_radix(&hex[4..6], 16) {
-                    return Some(egui::Color32::from_rgb(r, g, b));
+                    return Some(TerminalColor::from_rgb(r, g, b));
                 }
             }
         }

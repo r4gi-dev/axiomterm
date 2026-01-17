@@ -26,7 +26,7 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::utils::{parse_hex_color, tokenize_command};
-    use eframe::egui;
+    use crate::types::TerminalColor;
 
     #[test]
     fn test_simple_command() {
@@ -74,11 +74,11 @@ mod tests {
     fn test_hex_parsing() {
         assert_eq!(
             parse_hex_color("#FF0000"),
-            Some(egui::Color32::from_rgb(255, 0, 0))
+            Some(TerminalColor::from_rgb(255, 0, 0))
         );
         assert_eq!(
             parse_hex_color("00FF00"),
-            Some(egui::Color32::from_rgb(0, 255, 0))
+            Some(TerminalColor::from_rgb(0, 255, 0))
         );
         assert_eq!(parse_hex_color("invalid"), None);
     }

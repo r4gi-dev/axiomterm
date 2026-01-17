@@ -1,8 +1,7 @@
 use crate::config::parse_config;
-use crate::types::{LogLine, ShellEvent, ShellState};
+use crate::types::{LogLine, ShellEvent, ShellState, TerminalColor};
 use crate::utils::{get_default_config_path, tokenize_command};
 use crossbeam_channel::{Receiver, Sender};
-use eframe::egui;
 use std::env;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -59,7 +58,7 @@ pub fn spawn_shell_thread(
                     if let Err(e) = env::set_current_dir(&root) {
                         let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                             format!("Error: {}", e),
-                            egui::Color32::RED,
+                            TerminalColor::RED,
                         )));
                     } else if let Ok(cwd) = env::current_dir() {
                         let new_cwd_str = cwd.to_string_lossy().to_string();
@@ -81,7 +80,7 @@ pub fn spawn_shell_thread(
                         if let Err(e) = std::fs::create_dir_all(path) {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 format!("mkdir: {}: {}", path, e),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     }
@@ -93,14 +92,14 @@ pub fn spawn_shell_thread(
                                 if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::from_system_time(SystemTime::now())) {
                                     let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                         format!("touch (mtime): {}: {}", path, e),
-                                        egui::Color32::RED,
+                                        TerminalColor::RED,
                                     )));
                                 }
                             }
                             Err(e) => {
                                 let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                     format!("touch: {}: {}", path, e),
-                                    egui::Color32::RED,
+                                    TerminalColor::RED,
                                 )));
                             }
                         }
@@ -119,7 +118,7 @@ pub fn spawn_shell_thread(
                             Err(e) => {
                                 let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                     format!("cat: {}: {}", path, e),
-                                    egui::Color32::RED,
+                                    TerminalColor::RED,
                                 )));
                             }
                         }
@@ -130,7 +129,7 @@ pub fn spawn_shell_thread(
                         if let Err(e) = std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path)) {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 format!("rm: {}: {}", path, e),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     }
@@ -140,7 +139,7 @@ pub fn spawn_shell_thread(
                         if let Err(e) = std::fs::rename(&args[0], &args[1]) {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 format!("mv: {}", e),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     } else {
@@ -155,7 +154,7 @@ pub fn spawn_shell_thread(
                         if let Err(e) = std::fs::copy(&args[0], &args[1]) {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 format!("cp: {}", e),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     } else {
@@ -220,7 +219,7 @@ pub fn spawn_shell_thread(
                         Err(e) => {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 format!("ls: {}: {}", target_path, e),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     }
@@ -235,7 +234,7 @@ pub fn spawn_shell_thread(
                                 None => {
                                     let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                         "Error: Could not determine default config path".to_string(),
-                                        egui::Color32::RED,
+                                        TerminalColor::RED,
                                     )));
                                     continue;
                                 }
@@ -306,18 +305,18 @@ pub fn spawn_shell_thread(
                                 if let Some(e) = cwd_error {
                                     let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                         e,
-                                        egui::Color32::RED,
+                                        TerminalColor::RED,
                                     )));
                                 }
                                 let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                     format!("Config loaded from: {}", path.display()),
-                                    egui::Color32::GOLD,
+                                    TerminalColor::GOLD,
                                 )));
                             }
                             Err(e) => {
                                 let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                     format!("Failed to load config at {}: {}", path.display(), e),
-                                    egui::Color32::RED,
+                                    TerminalColor::RED,
                                 )));
                             }
                         }
@@ -358,7 +357,7 @@ pub fn spawn_shell_thread(
                                         if let Ok(l) = line {
                                             let _ = out_tx.send(ShellEvent::Output(LogLine::new(
                                                 l,
-                                                egui::Color32::RED,
+                                                TerminalColor::RED,
                                             )));
                                         }
                                     }
@@ -370,7 +369,7 @@ pub fn spawn_shell_thread(
                         Err(_) => {
                             let _ = output_tx.send(ShellEvent::Output(LogLine::new(
                                 "program not found".to_string(),
-                                egui::Color32::RED,
+                                TerminalColor::RED,
                             )));
                         }
                     }

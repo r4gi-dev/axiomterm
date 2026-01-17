@@ -1,5 +1,5 @@
 use crate::shell::spawn_shell_thread;
-use crate::types::{LogLine, ShellEvent, ShellState, TerminalMode};
+use crate::types::{LogLine, ShellEvent, ShellState, TerminalMode, TerminalColor};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui;
 use std::env;
@@ -24,8 +24,8 @@ impl TerminalApp {
 
         let state = Arc::new(Mutex::new(ShellState {
             prompt: "> ".to_string(),
-            prompt_color: egui::Color32::GREEN,
-            text_color: egui::Color32::LIGHT_GRAY,
+            prompt_color: TerminalColor::GREEN,
+            text_color: TerminalColor::LIGHT_GRAY,
             window_title_base: "Gemini Terminal".to_string(),
             window_title_full: "[INSERT] Gemini Terminal".to_string(),
             title_updated: false,
@@ -34,7 +34,7 @@ impl TerminalApp {
             opacity: 1.0,
             font_size: 14.0,
             current_dir: current_dir.clone(),
-            directory_color: egui::Color32::from_rgb(100, 150, 255), // Light blue
+            directory_color: TerminalColor::BLUE,
         }));
 
         spawn_shell_thread(command_rx, output_tx, Arc::clone(&state));
@@ -162,14 +162,16 @@ impl eframe::App for TerminalApp {
                     .show(ui, |ui| {
                         // History
                         for line in &self.history {
-                            ui.label(egui::RichText::new(&line.text).color(line.color));
+                            let color = egui::Color32::from_rgb(line.color.r, line.color.g, line.color.b);
+                            ui.label(egui::RichText::new(&line.text).color(color));
                         }
 
                         // Current Prompt/Input Line
                         ui.horizontal(|ui| {
+                            let p_color = egui::Color32::from_rgb(prompt_color.r, prompt_color.g, prompt_color.b);
                             ui.label(
                                 egui::RichText::new(prompt_text)
-                                    .color(prompt_color)
+                                    .color(p_color)
                                     .strong(),
                             );
 
