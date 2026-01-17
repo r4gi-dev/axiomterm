@@ -5,8 +5,28 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::path::PathBuf;
 
 // --- Helper Functions ---
+
+fn get_default_config_path() -> Option<PathBuf> {
+    // Try environment variables first for explicit control
+    let base = if let Ok(profile) = env::var("USERPROFILE") {
+        Some(PathBuf::from(profile).join(".config"))
+    } else if let Ok(home) = env::var("HOME") {
+        Some(PathBuf::from(home).join(".config"))
+    } else if let Some(config_dir) = dirs::config_dir() {
+        Some(config_dir)
+    } else {
+        dirs::home_dir().map(|h| h.join(".config"))
+    };
+
+    base.map(|mut p| {
+        p.push("gemini");
+        p.push("config.lua");
+        p
+    })
+}
 
 fn tokenize_command(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -113,7 +133,7 @@ struct ConfigUpdate {
     default_cwd: Option<String>,
 }
 
-fn parse_config(path: &str) -> Result<ConfigUpdate, Box<dyn std::error::Error>> {
+fn parse_config(path: &std::path::Path) -> Result<ConfigUpdate, Box<dyn std::error::Error>> {
     let code = std::fs::read_to_string(path)?;
     let ast = match full_moon::parse(&code) {
         Ok(ast) => ast,
@@ -302,40 +322,70 @@ impl TerminalApp {
                         let output = args.join(" ");
                         let _ = output_tx.send(output);
                     }
-                    "config" => {
-                         if args.len() >= 2 && args[0] == "load" {
-                            let path = &args[1];
-                            match parse_config(path) {
-                                Ok(update) => {
-                                    let mut s = thread_state.lock().unwrap();
-                                    if let Some(p) = update.prompt { s.prompt = p; }
-                                    if let Some(pc) = update.prompt_color { s.prompt_color = pc; }
-                                    if let Some(tc) = update.text_color { s.text_color = tc; }
-                                    if let Some(wt) = update.window_title { 
-                                        s.window_title_base = wt; 
+                     "config" => {
+                         if args.first().map(|s| s.as_str()) == Some("load") {
+                            let path = if let Some(path_arg) = args.get(1) {
+                                std::path::PathBuf::from(path_arg)
+                            } else {
+                                match get_default_config_path() {
+                                    Some(p) => p,
+                                    None => {
+                                        let _ = output_tx.send("Error: Could not determine default config path (USERPROFILE not set)".to_string());
+                                        continue;
                                     }
-                                    if let Some(sh) = update.shortcuts { s.shortcuts = sh; }
-                                    if let Some(op) = update.opacity { s.opacity = op; }
-                                    if let Some(fs) = update.font_size { s.font_size = fs; }
-                                    if let Some(cwd) = update.default_cwd {
-                                        let root = std::path::Path::new(&cwd);
+                                }
+                            };
+
+                            match parse_config(&path) {
+                                Ok(update) => {
+                                    let mut actual_cwd = None;
+                                    let mut cwd_error = None;
+                                    if let Some(new_cwd) = &update.default_cwd {
+                                        let root = std::path::Path::new(new_cwd);
                                         if let Err(e) = env::set_current_dir(&root) {
-                                            let _ = output_tx.send(format!("Failed to set default_cwd: {}", e));
-                                        } else if let Ok(actual_cwd) = env::current_dir() {
-                                            s.current_dir = actual_cwd.to_string_lossy().to_string();
+                                            cwd_error = Some(format!("Failed to set default_cwd to {}: {}", new_cwd, e));
+                                        } else {
+                                            match env::current_dir() {
+                                                Ok(cwd) => {
+                                                    actual_cwd = Some(cwd.to_string_lossy().to_string());
+                                                }
+                                                Err(e) => {
+                                                    cwd_error = Some(format!("Failed to read current dir '{}': {}", new_cwd, e));
+                                                }
+                                            }
                                         }
                                     }
-                                    
-                                    s.window_title_full = format!("[{:?}] {}", s.mode, s.window_title_base);
-                                    s.title_updated = true;
-                                    let _ = output_tx.send("Config loaded.".to_string());
+
+                                    {
+                                        let mut s = thread_state.lock().unwrap();
+                                        if let Some(p) = update.prompt { s.prompt = p; }
+                                        if let Some(pc) = update.prompt_color { s.prompt_color = pc; }
+                                        if let Some(tc) = update.text_color { s.text_color = tc; }
+                                        if let Some(wt) = update.window_title { 
+                                            s.window_title_base = wt; 
+                                        }
+                                        if let Some(sh) = update.shortcuts { s.shortcuts = sh; }
+                                        if let Some(op) = update.opacity { s.opacity = op; }
+                                        if let Some(fs) = update.font_size { s.font_size = fs; }
+                                        if let Some(cwd_str) = actual_cwd {
+                                            s.current_dir = cwd_str;
+                                        }
+                                        
+                                        s.window_title_full = format!("[{:?}] {}", s.mode, s.window_title_base);
+                                        s.title_updated = true;
+                                    }
+
+                                    if let Some(e) = cwd_error {
+                                        let _ = output_tx.send(e);
+                                    }
+                                    let _ = output_tx.send(format!("Config loaded from: {}", path.display()));
                                 }
                                 Err(e) => {
-                                    let _ = output_tx.send(format!("Failed to load config: {}", e));
+                                    let _ = output_tx.send(format!("Failed to load config at {}: {}", path.display(), e));
                                 }
                             }
                         } else {
-                            let _ = output_tx.send("Usage: config load <path>".to_string());
+                            let _ = output_tx.send("Usage: config load [path]".to_string());
                         }
                     }
                     command_name => {
@@ -425,13 +475,17 @@ impl eframe::App for TerminalApp {
                         let _ = self.command_tx.send(sc.cmd.clone());
                     }
                 } else if sc.key.len() == 1 {
-                    let char_key = sc.key.chars().next().unwrap();
-                    if ctx.input(|i| i.events.iter().any(|e| {
-                        if let egui::Event::Key { key, pressed: true, .. } = e {
-                             format!("{:?}", key).to_lowercase() == char_key.to_string().to_lowercase()
-                        } else { false }
-                    })) {
-                         let _ = self.command_tx.send(sc.cmd.clone());
+                    let char_key = sc.key.to_lowercase();
+                    if ctx.input(|i| {
+                        i.events.iter().any(|e| {
+                            if let egui::Event::Text(s) = e {
+                                s.to_lowercase() == char_key
+                            } else {
+                                false
+                            }
+                        })
+                    }) {
+                        let _ = self.command_tx.send(sc.cmd.clone());
                     }
                 }
             }
@@ -462,7 +516,7 @@ impl eframe::App for TerminalApp {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(egui::Color32::from_black_alpha((opacity * 255.0) as u8)))
+            .frame(egui::Frame::none().fill(egui::Color32::from_black_alpha((opacity.clamp(0.0, 1.0) * 255.0) as u8)))
             .show(ctx, |ui| {
                 ui.style_mut().visuals.extreme_bg_color = egui::Color32::BLACK;
                 ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLACK;

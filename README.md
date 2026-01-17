@@ -42,6 +42,9 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
   ```
   - Transparent execution of external commands.
   - Built-in management commands (`config load`, `cd`, `echo`, `exit`).
+- **Standard Config Path**:
+  - The default configuration file is located at `%USERPROFILE%\.config\gemini\config.lua`.
+  - Running `config load` without arguments will look for this file.
 - **Optimized Experience**:
   - Immediate submission via Enter key.
   - Support for empty line submission to navigate the terminal naturally.
@@ -74,4 +77,4 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
 ```powershell
 ./target/release/terminal.exe
 ```
-Try running `config load config.lua` after startup to experience the customized settings.
+Place your `config.lua` in `%USERPROFILE%\.config\gemini\` and run `config load` inside the terminal to experience the customized settings.

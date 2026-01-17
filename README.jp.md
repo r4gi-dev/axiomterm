@@ -18,15 +18,34 @@ Gemini Terminalは、「思考を中断させない」「操作を待たせな�
 
 ## ユーザーができること
 - **高度なカスタマイズ**:
-  - `gemini_prompt`: プロンプト文字列の変更
-  - `gemini_prompt_color`: プロンプトの色の変更（HEXカラー対応）
-  - `gemini_text_color`: 出力テキストの色の変更
-  - `gemini_window_title`: ウィンドウタイトルの変更
+  - `config.font_size`: フォントサイズの変更
+  - `config.window_background_opacity`: ウィンドウ透過率の変更
+  - `config.prompt`: プロンプト文字列の変更
+  - `config.prompt_color`: プロンプトの色の変更（HEXカラー対応）
+  - `config.text_color`: 出力テキストの色の変更
+  - `config.window_title`: ウィンドウタイトルの変更
+  - `config.default_cwd`: 起動時のカレントディレクトリ
+  - `config.keys`: カスタムショートカットの定義
+- **標準コンフィグパス**:
+  - デフォルトのコンフィグファイルは `%USERPROFILE%\.config\gemini\config.lua` に配置されます。
+  - `config load` を引数なしで実行すると、このファイルが読み込まれます。
+- **設定例 (オブジェクト形式)**:
+  ```lua
+  local config = {}
+  config.font_size = 14.0
+  config.window_background_opacity = 0.9
+  config.prompt = "gemini> "
+  config.keys = {
+      { key = "h", cmd = "cd .." },
+  }
+  return config
+  ```
 - **柔軟なコマンド操作**:
   - 外部コマンドの透過的な実行。
   - 内蔵コマンド（`config load`, `cd`, `echo`, `exit`）による制御。
 - **シームレスな体験**:
   - エンターキー、または空行入力による高速なシェル操作。
+  - 画面上部のステータスバーによる現在のディレクトリ表示。
 
 ## プロセス
 1. **フェーズ1: 基礎設計**: Rustによる基本的なREPL（Read-Eval-Print Loop）と外部プロセス実行機能の実装。
@@ -56,4 +75,4 @@ Gemini Terminalは、「思考を中断させない」「操作を待たせな�
 ```powershell
 ./target/release/terminal.exe
 ```
-起動後、`config load config.lua`を実行することで、カスタマイズされた設定を体験できます。
+`config.lua` を `%USERPROFILE%\.config\gemini\` に配置し、ターミナル内で `config load` を実行することで、カスタマイズされた設定を体験できます。
