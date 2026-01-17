@@ -25,6 +25,7 @@ Gemini Terminalは、「思考を中断させない」「操作を待たせな�
   - `config.text_color`: 出力テキストの色の変更
   - `config.window_title`: ウィンドウタイトルの変更
   - `config.default_cwd`: 起動時のカレントディレクトリ
+  - `config.directory_color`: ディレクトリ表示色の変更
   - `config.keys`: カスタムショートカットの定義
 - **標準コンフィグパス**:
   - デフォルトのコンフィグファイルは `%USERPROFILE%\.config\gemini\config.lua` に配置されます。
@@ -42,7 +43,7 @@ Gemini Terminalは、「思考を中断させない」「操作を待たせな�
   ```
 - **柔軟なコマンド操作**:
   - 外部コマンドの透過的な実行。
-  - 内蔵コマンド（`config load`, `cd`, `echo`, `exit`）による制御。
+  - 内蔵コマンド（`config load`, `ls`, `cd`, `echo`, `exit`）による制御。
 - **シームレスな体験**:
   - エンターキー、または空行入力による高速なシェル操作。
   - 画面上部のステータスバーによる現在のディレクトリ表示。

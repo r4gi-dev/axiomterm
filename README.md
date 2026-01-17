@@ -28,6 +28,7 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
   - `config.text_color`: Change the general output text color.
   - `config.window_title`: Set a custom application window title.
   - `config.default_cwd`: Set the starting directory (e.g., `"C:/"`).
+  - `config.directory_color`: Set the color for directories in `ls` (e.g., `"#6496FF"`).
   - `config.keys`: Define custom shortcuts using a list of tables.
 - **Example Config (Object Style)**:
   ```lua
@@ -41,7 +42,7 @@ Gemini Terminal is a lightweight, high-performance standalone terminal emulator 
   return config
   ```
   - Transparent execution of external commands.
-  - Built-in management commands (`config load`, `cd`, `echo`, `exit`).
+  - Built-in management commands (`config load`, `ls`, `cd`, `echo`, `exit`).
 - **Standard Config Path**:
   - The default configuration file is located at `%USERPROFILE%\.config\gemini\config.lua`.
   - Running `config load` without arguments will look for this file.
