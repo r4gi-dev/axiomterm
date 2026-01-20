@@ -25,16 +25,16 @@ pub fn parse_config(path: &Path) -> Result<ConfigUpdate, Box<dyn std::error::Err
                  };
                  
                  match var_name {
-                     "gemini_prompt" | "prompt" => {
+                     "axiomterm_prompt" | "prompt" => {
                         if let Some(val) = extract_string(expr) { update.prompt = Some(val); }
                      },
-                     "gemini_prompt_color" | "prompt_color" => {
+                     "axiomterm_prompt_color" | "prompt_color" => {
                         if let Some(val) = extract_string(expr) { update.prompt_color = parse_hex_color(&val); }
                      },
-                     "gemini_text_color" | "text_color" => {
+                     "axiomterm_text_color" | "text_color" => {
                         if let Some(val) = extract_string(expr) { update.text_color = parse_hex_color(&val); }
                      },
-                     "gemini_window_title" | "window_title" => {
+                     "axiomterm_window_title" | "window_title" => {
                         if let Some(val) = extract_string(expr) { update.window_title = Some(val); }
                      },
                      "window_background_opacity" => {
@@ -49,7 +49,7 @@ pub fn parse_config(path: &Path) -> Result<ConfigUpdate, Box<dyn std::error::Err
                      "directory_color" => {
                         if let Some(val) = extract_string(expr) { update.directory_color = parse_hex_color(&val); }
                      },
-                     "gemini_shortcuts" | "keys" => {
+                     "axiomterm_shortcuts" | "keys" => {
                          if let full_moon::ast::Expression::TableConstructor(table) = expr {
                              let mut shortcuts = Vec::new();
                              for field in table.fields() {
@@ -79,7 +79,7 @@ pub fn parse_config(path: &Path) -> Result<ConfigUpdate, Box<dyn std::error::Err
                              update.shortcuts = Some(shortcuts);
                          }
                      },
-                     "gemini_modes" | "modes" => {
+                     "axiomterm_modes" | "modes" => {
                          // For now, skip complex mode parsing due to full_moon API complexity
                          // Users can still define modes via shortcuts for basic functionality
                          // TODO: Implement robust Lua mode parsing in future iteration

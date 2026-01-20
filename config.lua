@@ -2,7 +2,7 @@ local config = {}
 
 config.font_size = 16.0
 config.window_background_opacity = 0.8
-config.window_title = "Gemini Wez-Edition"
+config.window_title = "axiomterm"
 config.prompt = "wez-shell> "
 config.prompt_color = "#FF8800" -- Orange
 config.directory_color = "#6496FF" -- Sky Blue

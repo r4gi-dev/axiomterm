@@ -4,23 +4,42 @@ mod shell;
 mod types;
 mod utils;
 mod backend;
+mod fixed_config;
 
 use crate::app::TerminalApp;
+use crate::fixed_config::FixedConfig;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
+    // CRITICAL: Load FixedConfig FIRST
+    // This determines the terminal's existence conditions
+    // Failure here MUST abort startup
+    let fixed_config = FixedConfig::load()
+        .expect("FATAL: Failed to load fixed configuration (terminal.toml)");
+    
+    // Validate FixedConfig
+    if let Err(e) = fixed_config.validate() {
+        panic!("FATAL: Invalid fixed configuration: {}", e);
+    }
+
+    // Initialize Backend based on FixedConfig
+    // Currently only StdBackend is supported
+    let backend = Box::new(backend::StdBackend);
+
+    // Initialize Renderer based on FixedConfig
+    // Currently only egui is supported
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
-            .with_title("[INSERT] Gemini Terminal")
-            .with_transparent(true),
+            .with_inner_size([fixed_config.window.initial_width as f32, fixed_config.window.initial_height as f32])
+            .with_title(&format!("[INSERT] axiomterm"))
+            .with_transparent(fixed_config.window.transparent),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Gemini Terminal",
+        "axiomterm",
         options,
-        Box::new(|cc| Ok(Box::new(TerminalApp::new(cc, Box::new(backend::StdBackend))))),
+        Box::new(move |cc| Ok(Box::new(TerminalApp::new(cc, backend, &fixed_config)))),
     )
 }
 

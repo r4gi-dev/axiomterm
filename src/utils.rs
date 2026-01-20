@@ -15,7 +15,7 @@ pub fn get_default_config_path() -> Option<PathBuf> {
     };
 
     base.map(|mut p| {
-        p.push("gemini");
+        p.push("axiomterm");
         p.push("config.lua");
         p
     })

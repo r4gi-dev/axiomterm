@@ -1,6 +1,7 @@
 use crate::shell::spawn_shell_thread;
 use crate::types::{Action, InputEvent, KeyBinding, ModeDefinition, ShellState, TerminalMode, Screen, ShellEvent, TerminalColor};
 use crate::backend::ProcessBackend;
+use crate::fixed_config::FixedConfig;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui;
 use std::env;
@@ -13,7 +14,7 @@ pub struct TerminalApp {
 }
 
 impl TerminalApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, backend: Box<dyn ProcessBackend>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, backend: Box<dyn ProcessBackend>, fixed_config: &FixedConfig) -> Self {
         let (action_tx, action_rx) = unbounded::<Action>();
         let (output_tx, output_rx) = unbounded::<ShellEvent>();
 
@@ -21,12 +22,20 @@ impl TerminalApp {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| ".".to_string());
 
+        // Determine initial mode from FixedConfig
+        let initial_mode = match fixed_config.core.initial_mode.as_str() {
+            "insert" => TerminalMode::Insert,
+            "normal" => TerminalMode::Normal,
+            "visual" => TerminalMode::Visual,
+            _ => TerminalMode::Insert, // Fallback
+        };
+
         let state = Arc::new(Mutex::new(ShellState {
             prompt: "> ".to_string(),
             prompt_color: TerminalColor::GREEN,
             text_color: TerminalColor::LIGHT_GRAY,
-            window_title_base: "Gemini Terminal".to_string(),
-            window_title_full: "[INSERT] Gemini Terminal".to_string(),
+            window_title_base: "axiomterm".to_string(),
+            window_title_full: "[INSERT] axiomterm".to_string(),
             title_updated: false,
             mode: TerminalMode::Insert,
             shortcuts: Vec::new(),

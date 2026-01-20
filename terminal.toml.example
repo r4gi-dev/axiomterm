@@ -1,0 +1,32 @@
+# Terminal Fixed Configuration
+# This file defines the terminal's existence conditions.
+# These settings are loaded ONCE at startup and CANNOT be changed during runtime.
+# For runtime-mutable settings (colors, keybindings, etc.), use config.lua
+
+[core]
+# Backend selection: "std" (standard process), "wasm" (future), "remote" (future)
+backend = "std"
+
+# Renderer selection: "egui" (GUI), "headless" (future)
+renderer = "egui"
+
+# Initial mode when terminal starts: "insert", "normal", or "visual"
+initial_mode = "insert"
+
+[security]
+# Security boundaries for Lua scripts
+# These settings control what Lua can access
+
+# Allow Lua to perform file I/O operations (NOT IMPLEMENTED YET)
+lua_allow_io = false
+
+# Allow Lua to make network requests (NOT IMPLEMENTED YET)
+lua_allow_network = false
+
+[window]
+# Initial window dimensions (in pixels)
+initial_width = 800
+initial_height = 600
+
+# Window transparency (true/false)
+transparent = true
