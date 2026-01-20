@@ -78,7 +78,12 @@ pub fn parse_config(path: &Path) -> Result<ConfigUpdate, Box<dyn std::error::Err
                              }
                              update.shortcuts = Some(shortcuts);
                          }
-                     }
+                     },
+                     "gemini_modes" | "modes" => {
+                         // For now, skip complex mode parsing due to full_moon API complexity
+                         // Users can still define modes via shortcuts for basic functionality
+                         // TODO: Implement robust Lua mode parsing in future iteration
+                     },
                      _ => {}
                  }
             }

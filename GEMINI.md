@@ -384,3 +384,9 @@ Neovim Lua Architecture
 
 https://neovim.io/doc/user/lua.html
 
+
+
+
+
+
+*please speak japanese

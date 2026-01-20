@@ -1,21 +1,20 @@
 use crate::shell::spawn_shell_thread;
-use crate::types::{LogLine, ShellEvent, ShellState, TerminalMode, TerminalColor};
+use crate::types::{Action, InputEvent, KeyBinding, ModeDefinition, ShellState, TerminalMode, Screen, ShellEvent, TerminalColor};
+use crate::backend::ProcessBackend;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use eframe::egui;
 use std::env;
 use std::sync::{Arc, Mutex};
 
 pub struct TerminalApp {
-    pub input: String,
-    pub history: Vec<LogLine>,
     pub shell_state: Arc<Mutex<ShellState>>,
-    pub command_tx: Sender<String>,
+    pub action_tx: Sender<Action>,
     pub output_rx: Receiver<ShellEvent>,
 }
 
 impl TerminalApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let (command_tx, command_rx) = unbounded::<String>();
+    pub fn new(_cc: &eframe::CreationContext<'_>, backend: Box<dyn ProcessBackend>) -> Self {
+        let (action_tx, action_rx) = unbounded::<Action>();
         let (output_tx, output_rx) = unbounded::<ShellEvent>();
 
         let current_dir = env::current_dir()
@@ -35,32 +34,85 @@ impl TerminalApp {
             font_size: 14.0,
             current_dir: current_dir.clone(),
             directory_color: TerminalColor::BLUE,
+            screen: Screen::new(),
+            input_buffer: String::new(),
+            mode_definitions: vec![
+                ModeDefinition {
+                    mode: TerminalMode::Insert,
+                    bindings: vec![
+                        KeyBinding { event: InputEvent::Key { code: "Enter".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Submit },
+                        KeyBinding { event: InputEvent::Key { code: "Backspace".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Backspace },
+                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, action: Action::ChangeMode(TerminalMode::Normal) },
+                    ],
+                },
+                ModeDefinition {
+                    mode: TerminalMode::Normal,
+                    bindings: vec![
+                        KeyBinding { event: InputEvent::Key { code: "I".to_string(), ctrl: false, alt: false, shift: false }, action: Action::ChangeMode(TerminalMode::Insert) },
+                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Clear },
+                    ],
+                },
+            ],
         }));
 
-        spawn_shell_thread(command_rx, output_tx, Arc::clone(&state));
+        spawn_shell_thread(action_rx, output_tx, Arc::clone(&state), backend);
 
         Self {
-            input: String::new(),
-            history: Vec::new(),
             shell_state: state,
-            command_tx,
+            action_tx,
             output_rx,
         }
+    }
+
+    fn map_input(&self, event: &InputEvent, mode: &TerminalMode) -> Option<Action> {
+        let s = self.shell_state.lock().unwrap();
+        
+        // Find definition for current mode
+        if let Some(def) = s.mode_definitions.iter().find(|d| d.mode == *mode) {
+            for binding in &def.bindings {
+                if binding.event == *event {
+                    return Some(binding.action.clone());
+                }
+            }
+        }
+
+        // Fallback or Insert mode text handling
+        if *mode == TerminalMode::Insert {
+            if let InputEvent::Text(s) = event {
+                if let Some(ch) = s.chars().next() {
+                    return Some(Action::AppendChar(ch));
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl From<TerminalColor> for egui::Color32 {
+    fn from(c: TerminalColor) -> Self {
+        egui::Color32::from_rgb(c.r, c.g, c.b)
     }
 }
 
 impl eframe::App for TerminalApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Poll for new output
+        // Poll for new events (Operations are the primary driver of state changes)
         while let Ok(event) = self.output_rx.try_recv() {
             match event {
-                ShellEvent::Output(line) => self.history.push(line),
-                ShellEvent::Clear => self.history.clear(),
+                ShellEvent::Operation(_op) => {
+                    // In a more advanced renderer, we would use _op to do partial invalidation.
+                    // For now, receiving an operation just triggers a natural repaint.
+                    ctx.request_repaint();
+                }
+                ShellEvent::Notification(msg) => {
+                    println!("Notification: {}", msg);
+                }
             }
         }
 
-        // Global Key Intercept
-        let (current_mode, shortcuts, opacity, font_size, current_dir) = {
+        // Fetch state for interpretation and rendering
+        let (current_mode, _shortcuts, opacity, font_size, current_dir, text_color, dir_color) = {
             let s = self.shell_state.lock().unwrap();
             (
                 s.mode.clone(),
@@ -68,47 +120,37 @@ impl eframe::App for TerminalApp {
                 s.opacity,
                 s.font_size,
                 s.current_dir.clone(),
+                s.text_color,
+                s.directory_color,
             )
         };
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            let mut s = self.shell_state.lock().unwrap();
-            s.mode = if s.mode == TerminalMode::Insert {
-                TerminalMode::Normal
-            } else {
-                TerminalMode::Insert
-            };
-            s.window_title_full = format!("[{:?}] {}", s.mode, s.window_title_base);
-            s.title_updated = true;
-        }
-
-        if current_mode == TerminalMode::Normal {
-            if ctx.input(|i| i.key_pressed(egui::Key::I)) {
-                let mut s = self.shell_state.lock().unwrap();
-                s.mode = TerminalMode::Insert;
-                s.window_title_full = format!("[{:?}] {}", s.mode, s.window_title_base);
-                s.title_updated = true;
-            }
-
-            for sc in shortcuts {
-                if let Some(key) = egui::Key::from_name(&sc.key) {
-                    if ctx.input(|i| i.key_pressed(key)) {
-                        let _ = self.command_tx.send(sc.cmd.clone());
+        // Capture and process InputEvents
+        let mut events = Vec::new();
+        ctx.input(|i| {
+            for event in &i.events {
+                match event {
+                    egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                        events.push(InputEvent::Key {
+                            code: format!("{:?}", key),
+                            ctrl: modifiers.command, // command maps to ctrl on Windows/Linux, cmd on Mac
+                            alt: modifiers.alt,
+                            shift: modifiers.shift,
+                        });
                     }
-                } else if sc.key.len() == 1 {
-                    let char_key = sc.key.to_lowercase();
-                    if ctx.input(|i| {
-                        i.events.iter().any(|e| {
-                            if let egui::Event::Text(s) = e {
-                                s.to_lowercase() == char_key
-                            } else {
-                                false
-                            }
-                        })
-                    }) {
-                        let _ = self.command_tx.send(sc.cmd.clone());
+                    egui::Event::Text(text) => {
+                        if !text.is_empty() {
+                            events.push(InputEvent::Text(text.clone()));
+                        }
                     }
+                    _ => {}
                 }
+            }
+        });
+
+        for event in events {
+            if let Some(action) = self.map_input(&event, &current_mode) {
+                let _ = self.action_tx.send(action);
             }
         }
 
@@ -135,10 +177,10 @@ impl eframe::App for TerminalApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("PWD:").color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new("PWD:").color(egui::Color32::from(text_color)));
                     ui.label(
                         egui::RichText::new(current_dir)
-                            .color(egui::Color32::from_rgb(100, 200, 255)),
+                            .color(egui::Color32::from(dir_color)),
                     );
                 });
             });
@@ -151,49 +193,52 @@ impl eframe::App for TerminalApp {
                 ui.style_mut().visuals.extreme_bg_color = egui::Color32::BLACK;
                 ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLACK;
 
-                let (prompt_text, prompt_color, mode) = {
+                let (prompt_text, prompt_color, mode, lines) = {
                     let s = self.shell_state.lock().unwrap();
-                    (s.prompt.clone(), s.prompt_color, s.mode.clone())
+                    (
+                        s.prompt.clone(),
+                        s.prompt_color,
+                        s.mode.clone(),
+                        s.screen.lines.clone(),
+                    )
                 };
 
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        // History
-                        for line in &self.history {
-                            let color = egui::Color32::from_rgb(line.color.r, line.color.g, line.color.b);
-                            ui.label(egui::RichText::new(&line.text).color(color));
+                        // History (Screen Lines)
+                        for line in &lines {
+                            ui.horizontal(|ui| {
+                                ui.style_mut().spacing.item_spacing.x = 0.0;
+                                for cell in &line.cells {
+                                    ui.label(
+                                        egui::RichText::new(cell.ch.to_string())
+                                            .color(egui::Color32::from(cell.fg)),
+                                    );
+                                }
+                            });
                         }
 
                         // Current Prompt/Input Line
                         ui.horizontal(|ui| {
-                            let p_color = egui::Color32::from_rgb(prompt_color.r, prompt_color.g, prompt_color.b);
                             ui.label(
                                 egui::RichText::new(prompt_text)
-                                    .color(p_color)
+                                    .color(egui::Color32::from(prompt_color))
                                     .strong(),
                             );
 
-                            let mut text_edit = egui::TextEdit::singleline(&mut self.input)
+                            let mut s = self.shell_state.lock().unwrap();
+                            let text_edit = egui::TextEdit::singleline(&mut s.input_buffer)
                                 .desired_width(ui.available_width())
                                 .frame(false)
                                 .text_color(egui::Color32::WHITE)
                                 .lock_focus(true);
 
-                            if mode == TerminalMode::Normal {
-                                text_edit = text_edit.interactive(false).text_color(egui::Color32::GRAY);
-                            }
-
                             let re = ui.add(text_edit);
-
+                            // We don't need to manually send enter here anymore as it's handled by map_input -> Action::Submit
                             if mode == TerminalMode::Insert {
                                 re.request_focus();
-                                if re.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                    let cmd = std::mem::take(&mut self.input);
-                                    let _ = self.command_tx.send(cmd);
-                                    re.request_focus();
-                                }
                             }
                         });
                     });

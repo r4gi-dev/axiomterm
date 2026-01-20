@@ -1,5 +1,6 @@
 use crate::config::parse_config;
-use crate::types::{LogLine, ShellEvent, ShellState, TerminalColor};
+use crate::types::{Action, Line, ShellEvent, ShellState, TerminalColor};
+use crate::backend::ProcessBackend;
 use crate::utils::{get_default_config_path, tokenize_command};
 use crossbeam_channel::{Receiver, Sender};
 use std::env;
@@ -10,44 +11,87 @@ use std::thread;
 use std::time::SystemTime;
 
 pub fn spawn_shell_thread(
-    command_rx: Receiver<String>,
+    action_rx: Receiver<Action>,
     output_tx: Sender<ShellEvent>,
     thread_state: Arc<Mutex<ShellState>>,
+    backend: Box<dyn ProcessBackend>,
 ) {
     thread::spawn(move || {
         loop {
-            let cmd_line = match command_rx.recv() {
-                Ok(line) => line,
+            let action = match action_rx.recv() {
+                Ok(a) => a,
                 Err(_) => break, // Channel closed
             };
 
-            // Echo input with prompt color
-            let (prompt, prompt_color) = {
-                let s = thread_state.lock().unwrap();
-                (s.prompt.clone(), s.prompt_color)
-            };
-            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                format!("{}{}", prompt, cmd_line),
-                prompt_color,
-            )));
+            match action {
+                Action::AppendChar(ch) => {
+                    let mut s = thread_state.lock().unwrap();
+                    s.input_buffer.push(ch);
+                    // For now, simple echo: we don't redraw the whole line, just push char to current line logic?
+                    // Actually, the current line logic is "push_line".
+                    // Let's just update the buffer. The renderer will need to show the prompt + buffer.
+                }
+                Action::Backspace => {
+                    let mut s = thread_state.lock().unwrap();
+                    s.input_buffer.pop();
+                }
+                Action::Submit => {
+                    let cmd_line = {
+                        let mut s = thread_state.lock().unwrap();
+                        let line = std::mem::take(&mut s.input_buffer);
+                        
+                        // Echo the final submitted command
+                        let prompt = s.prompt.clone();
+                        let prompt_color = s.prompt_color;
+                        let op = s.screen.push_line(Line::from_string(&format!("{}{}", prompt, line), prompt_color));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
+                        line
+                    };
 
+                    execute_command(&cmd_line, &thread_state, &output_tx, &*backend);
+                }
+                Action::Clear => {
+                    let mut s = thread_state.lock().unwrap();
+                    let op = s.screen.clear();
+                    let _ = output_tx.send(ShellEvent::Operation(op));
+                }
+                Action::ChangeMode(new_mode) => {
+                    let mut s = thread_state.lock().unwrap();
+                    s.mode = new_mode;
+                    s.window_title_full = format!("[{}] {}", s.mode.name(), s.window_title_base);
+                    s.title_updated = true;
+                }
+                Action::RunCommand(cmd) => {
+                    execute_command(&cmd, &thread_state, &output_tx, &*backend);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+fn execute_command(
+    cmd_line: &str,
+    thread_state: &Arc<Mutex<ShellState>>,
+    output_tx: &Sender<ShellEvent>,
+    backend: &dyn ProcessBackend,
+) {
             let cmd_line = cmd_line.trim();
             if cmd_line.is_empty() {
-                continue;
+                return;
             }
 
             let parts = tokenize_command(cmd_line);
             if parts.is_empty() {
-                continue;
+                return;
             }
 
             let command = &parts[0];
             let args = &parts[1..];
 
-            // Base text color for output
-            let (text_color, dir_color, current_dir) = {
+            let (text_color, dir_color) = {
                 let s = thread_state.lock().unwrap();
-                (s.text_color, s.directory_color, s.current_dir.clone())
+                (s.text_color, s.directory_color)
             };
 
             match command.as_str() {
@@ -56,32 +100,39 @@ pub fn spawn_shell_thread(
                     let new_dir = args.get(0).map_or("/", |x| x.as_str());
                     let root = std::path::Path::new(new_dir);
                     if let Err(e) = env::set_current_dir(&root) {
-                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                            format!("Error: {}", e),
-                            TerminalColor::RED,
-                        )));
+                        let mut s = thread_state.lock().unwrap();
+                        let op = s.screen.push_line(Line::from_string(&format!("Error: {}", e), TerminalColor::RED));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
                     } else if let Ok(cwd) = env::current_dir() {
                         let new_cwd_str = cwd.to_string_lossy().to_string();
                         thread_state.lock().unwrap().current_dir = new_cwd_str;
                     }
                 }
                 "pwd" => {
-                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(current_dir, text_color)));
+                    let mut s = thread_state.lock().unwrap();
+                    let current_dir = s.current_dir.clone();
+                    let text_color = s.text_color;
+                    let op = s.screen.push_line(Line::from_string(&current_dir, text_color));
+                    let _ = output_tx.send(ShellEvent::Operation(op));
                 }
                 "clear" => {
-                    let _ = output_tx.send(ShellEvent::Clear);
+                    let mut s = thread_state.lock().unwrap();
+                    let op = s.screen.clear();
+                    let _ = output_tx.send(ShellEvent::Operation(op));
                 }
                 "echo" => {
                     let output = args.join(" ");
-                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(output, text_color)));
+                    let mut s = thread_state.lock().unwrap();
+                    let text_color = s.text_color;
+                    let op = s.screen.push_line(Line::from_string(&output, text_color));
+                    let _ = output_tx.send(ShellEvent::Operation(op));
                 }
                 "mkdir" => {
                     for path in args {
                         if let Err(e) = std::fs::create_dir_all(path) {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("mkdir: {}: {}", path, e),
-                                TerminalColor::RED,
-                            )));
+                            let mut s = thread_state.lock().unwrap();
+                            let op = s.screen.push_line(Line::from_string(&format!("mkdir: {}: {}", path, e), TerminalColor::RED));
+                            let _ = output_tx.send(ShellEvent::Operation(op));
                         }
                     }
                 }
@@ -90,17 +141,15 @@ pub fn spawn_shell_thread(
                         match std::fs::OpenOptions::new().create(true).write(true).open(path) {
                             Ok(_) => {
                                 if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::from_system_time(SystemTime::now())) {
-                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                        format!("touch (mtime): {}: {}", path, e),
-                                        TerminalColor::RED,
-                                    )));
+                                    let mut s = thread_state.lock().unwrap();
+                                    let op = s.screen.push_line(Line::from_string(&format!("touch (mtime): {}: {}", path, e), TerminalColor::RED));
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
                                 }
                             }
                             Err(e) => {
-                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                    format!("touch: {}: {}", path, e),
-                                    TerminalColor::RED,
-                                )));
+                                let mut s = thread_state.lock().unwrap();
+                                let op = s.screen.push_line(Line::from_string(&format!("touch: {}: {}", path, e), TerminalColor::RED));
+                                let _ = output_tx.send(ShellEvent::Operation(op));
                             }
                         }
                     }
@@ -109,17 +158,16 @@ pub fn spawn_shell_thread(
                     for path in args {
                         match std::fs::read_to_string(path) {
                             Ok(content) => {
+                                let mut s = thread_state.lock().unwrap();
                                 for line in content.lines() {
-                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                        line, text_color,
-                                    )));
+                                    let op = s.screen.push_line(Line::from_string(line, text_color));
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
                                 }
                             }
                             Err(e) => {
-                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                    format!("cat: {}: {}", path, e),
-                                    TerminalColor::RED,
-                                )));
+                                let mut s = thread_state.lock().unwrap();
+                                let op = s.screen.push_line(Line::from_string(&format!("cat: {}: {}", path, e), TerminalColor::RED));
+                                let _ = output_tx.send(ShellEvent::Operation(op));
                             }
                         }
                     }
@@ -127,41 +175,36 @@ pub fn spawn_shell_thread(
                 "rm" => {
                     for path in args {
                         if let Err(e) = std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path)) {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("rm: {}: {}", path, e),
-                                TerminalColor::RED,
-                            )));
+                            let mut s = thread_state.lock().unwrap();
+                            let op = s.screen.push_line(Line::from_string(&format!("rm: {}: {}", path, e), TerminalColor::RED));
+                            let _ = output_tx.send(ShellEvent::Operation(op));
                         }
                     }
                 }
                 "mv" => {
                     if args.len() == 2 {
                         if let Err(e) = std::fs::rename(&args[0], &args[1]) {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("mv: {}", e),
-                                TerminalColor::RED,
-                            )));
+                            let mut s = thread_state.lock().unwrap();
+                            let op = s.screen.push_line(Line::from_string(&format!("mv: {}", e), TerminalColor::RED));
+                            let _ = output_tx.send(ShellEvent::Operation(op));
                         }
                     } else {
-                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                            "Usage: mv <source> <dest>",
-                            text_color,
-                        )));
+                        let mut s = thread_state.lock().unwrap();
+                        let op = s.screen.push_line(Line::from_string("Usage: mv <source> <dest>", text_color));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
                     }
                 }
                 "cp" => {
                     if args.len() == 2 {
                         if let Err(e) = std::fs::copy(&args[0], &args[1]) {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("cp: {}", e),
-                                TerminalColor::RED,
-                            )));
+                            let mut s = thread_state.lock().unwrap();
+                            let op = s.screen.push_line(Line::from_string(&format!("cp: {}", e), TerminalColor::RED));
+                            let _ = output_tx.send(ShellEvent::Operation(op));
                         }
                     } else {
-                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                            "Usage: cp <source> <dest>",
-                            text_color,
-                        )));
+                        let mut s = thread_state.lock().unwrap();
+                        let op = s.screen.push_line(Line::from_string("Usage: cp <source> <dest>", text_color));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
                     }
                 }
                 "ls" => {
@@ -197,30 +240,29 @@ pub fn spawn_shell_thread(
                                         line_color = dir_color;
                                     }
 
-                                    if long_format {
+                                    let mut s = thread_state.lock().unwrap();
+                                    let op = if long_format {
                                         let type_indicator = if is_dir { "<DIR>" } else { "     " };
                                         let size = metadata.len();
-                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                            format!("{} {:>12} {}", type_indicator, size, file_name),
+                                        s.screen.push_line(Line::from_string(
+                                            &format!("{} {:>12} {}", type_indicator, size, file_name),
                                             line_color,
-                                        )));
+                                        ))
                                     } else {
-                                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                            file_name, line_color,
-                                        )));
-                                    }
+                                        s.screen.push_line(Line::from_string(&file_name, line_color))
+                                    };
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
                                 } else {
-                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                        file_name, text_color,
-                                    )));
+                                    let mut s = thread_state.lock().unwrap();
+                                    let op = s.screen.push_line(Line::from_string(&file_name, text_color));
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
                                 }
                             }
                         }
                         Err(e) => {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                format!("ls: {}: {}", target_path, e),
-                                TerminalColor::RED,
-                            )));
+                            let mut s = thread_state.lock().unwrap();
+                            let op = s.screen.push_line(Line::from_string(&format!("ls: {}: {}", target_path, e), TerminalColor::RED));
+                            let _ = output_tx.send(ShellEvent::Operation(op));
                         }
                     }
                 }
@@ -232,11 +274,10 @@ pub fn spawn_shell_thread(
                             match get_default_config_path() {
                                 Some(p) => p,
                                 None => {
-                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                        "Error: Could not determine default config path".to_string(),
-                                        TerminalColor::RED,
-                                    )));
-                                    continue;
+                                    let mut s = thread_state.lock().unwrap();
+                                    let op = s.screen.push_line(Line::from_string("Error: Could not determine default config path", TerminalColor::RED));
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
+                                    return;
                                 }
                             }
                         };
@@ -293,88 +334,48 @@ pub fn spawn_shell_thread(
                                     if let Some(dc) = update.directory_color {
                                         s.directory_color = dc;
                                     }
+                                    if let Some(md) = update.mode_definitions {
+                                        s.mode_definitions = md;
+                                    }
                                     if let Some(cwd_str) = actual_cwd {
                                         s.current_dir = cwd_str;
                                     }
 
                                     s.window_title_full =
-                                        format!("[{:?}] {}", s.mode, s.window_title_base);
+                                        format!("[{}] {}", s.mode.name(), s.window_title_base);
                                     s.title_updated = true;
                                 }
 
                                 if let Some(e) = cwd_error {
-                                    let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                        e,
-                                        TerminalColor::RED,
-                                    )));
+                                    let mut s = thread_state.lock().unwrap();
+                                    let op = s.screen.push_line(Line::from_string(&e, TerminalColor::RED));
+                                    let _ = output_tx.send(ShellEvent::Operation(op));
                                 }
-                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                    format!("Config loaded from: {}", path.display()),
+                                let mut s = thread_state.lock().unwrap();
+                                let op = s.screen.push_line(Line::from_string(
+                                    &format!("Config loaded from: {}", path.display()),
                                     TerminalColor::GOLD,
-                                )));
+                                ));
+                                let _ = output_tx.send(ShellEvent::Operation(op));
                             }
                             Err(e) => {
-                                let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                    format!("Failed to load config at {}: {}", path.display(), e),
-                                    TerminalColor::RED,
-                                )));
+                                let mut s = thread_state.lock().unwrap();
+                                let op = s.screen.push_line(Line::from_string(&format!("Failed to load config at {}: {}", path.display(), e), TerminalColor::RED));
+                                let _ = output_tx.send(ShellEvent::Operation(op));
                             }
                         }
                     } else {
-                        let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                            "Usage: config load [path]".to_string(),
-                            text_color,
-                        )));
+                        let mut s = thread_state.lock().unwrap();
+                        let op = s.screen.push_line(Line::from_string("Usage: config load [path]", text_color));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
                     }
                 }
                 command_name => {
-                    match Command::new(command_name)
-                        .args(args)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                    {
-                        Ok(mut child) => {
-                            if let Some(stdout) = child.stdout.take() {
-                                let out_tx = output_tx.clone();
-                                thread::spawn(move || {
-                                    let reader = BufReader::new(stdout);
-                                    for line in reader.lines() {
-                                        if let Ok(l) = line {
-                                            let _ = out_tx.send(ShellEvent::Output(LogLine::new(
-                                                l, text_color,
-                                            )));
-                                        }
-                                    }
-                                });
-                            }
-
-                            if let Some(stderr) = child.stderr.take() {
-                                let out_tx = output_tx.clone();
-                                thread::spawn(move || {
-                                    let reader = BufReader::new(stderr);
-                                    for line in reader.lines() {
-                                        if let Ok(l) = line {
-                                            let _ = out_tx.send(ShellEvent::Output(LogLine::new(
-                                                l,
-                                                TerminalColor::RED,
-                                            )));
-                                        }
-                                    }
-                                });
-                            }
-
-                            let _ = child.wait();
-                        }
-                        Err(_) => {
-                            let _ = output_tx.send(ShellEvent::Output(LogLine::new(
-                                "program not found".to_string(),
-                                TerminalColor::RED,
-                            )));
-                        }
+                    if let Err(e) = backend.spawn(command_name, args, output_tx.clone(), Arc::clone(thread_state)) {
+                        let mut s = thread_state.lock().unwrap();
+                        let op = s.screen.push_line(Line::from_string(&format!("Failed to spawn {}: {}", command_name, e), TerminalColor::RED));
+                        let _ = output_tx.send(ShellEvent::Operation(op));
                     }
                 }
             }
-        }
-    });
 }

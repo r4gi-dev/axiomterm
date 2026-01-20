@@ -1,5 +1,5 @@
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalColor {
     pub r: u8,
     pub g: u8,
@@ -11,6 +11,7 @@ impl TerminalColor {
         Self { r, g, b }
     }
 
+    pub const BLACK: Self = Self::from_rgb(0, 0, 0);
     pub const RED: Self = Self::from_rgb(255, 0, 0);
     pub const GREEN: Self = Self::from_rgb(0, 255, 0);
     pub const BLUE: Self = Self::from_rgb(100, 150, 255);
@@ -20,32 +21,187 @@ impl TerminalColor {
     pub const GRAY: Self = Self::from_rgb(128, 128, 128);
 }
 
-#[derive(Clone, Debug)]
-pub struct LogLine {
-    pub text: String,
-    pub color: TerminalColor,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CellAttr {
+    pub bold: bool,
+    pub underline: bool,
 }
 
-impl LogLine {
-    pub fn new(text: impl Into<String>, color: TerminalColor) -> Self {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cell {
+    pub ch: char,
+    pub fg: TerminalColor,
+    pub bg: TerminalColor,
+    pub attrs: CellAttr,
+}
+
+impl Cell {
+    pub fn new(ch: char, fg: TerminalColor) -> Self {
         Self {
-            text: text.into(),
-            color,
+            ch,
+            fg,
+            bg: TerminalColor::BLACK,
+            attrs: CellAttr::default(),
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum ShellEvent {
-    Output(LogLine),
-    Clear,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Line {
+    pub cells: Vec<Cell>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl Line {
+    pub fn new() -> Self {
+        Self { cells: Vec::new() }
+    }
+
+    pub fn from_string(s: &str, fg: TerminalColor) -> Self {
+        Self {
+            cells: s.chars().map(|c| Cell::new(c, fg)).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    pub row: usize,
+    pub col: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScreenMeta {
+    pub dirty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScreenOperation {
+    PushLine(Line),
+    Clear,
+    SetCursor(Cursor),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Screen {
+    pub lines: Vec<Line>,
+    pub cursor: Cursor,
+    pub meta: ScreenMeta,
+}
+
+impl Screen {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push_line(&mut self, line: Line) -> ScreenOperation {
+        self.lines.push(line.clone());
+        self.meta.dirty = true;
+        ScreenOperation::PushLine(line)
+    }
+
+    pub fn clear(&mut self) -> ScreenOperation {
+        self.lines.clear();
+        self.cursor = Cursor::default();
+        self.meta.dirty = true;
+        ScreenOperation::Clear
+    }
+
+    pub fn set_cursor(&mut self, cursor: Cursor) -> ScreenOperation {
+        self.cursor = cursor;
+        self.meta.dirty = true;
+        ScreenOperation::SetCursor(cursor)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    AppendChar(char),
+    Backspace,
+    Delete,
+    Submit,          // Typically Enter
+    Clear,           // Clear screen
+    MoveCursor(i32, i32), // Delta move
+    ChangeMode(TerminalMode),
+    RunCommand(String),
+    NoOp,
+}
+
+impl Action {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Backspace" => Some(Self::Backspace),
+            "Delete" => Some(Self::Delete),
+            "Submit" | "Enter" => Some(Self::Submit),
+            "Clear" => Some(Self::Clear),
+            "NoOp" => Some(Self::NoOp),
+            _ if s.starts_with("ChangeMode(") && s.ends_with(')') => {
+                let mode_str = &s[11..s.len()-1];
+                TerminalMode::from_str(mode_str).map(Self::ChangeMode)
+            },
+            _ if s.starts_with("RunCommand(") && s.ends_with(')') => {
+                let cmd = &s[11..s.len()-1];
+                Some(Self::RunCommand(cmd.to_string()))
+            },
+            _ if s.len() == 1 => Some(Self::AppendChar(s.chars().next().unwrap())),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum InputEvent {
+    Key { code: String, ctrl: bool, alt: bool, shift: bool },
+    Text(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TerminalMode {
     Insert,
     Normal,
+    Visual,
+    Custom(String),
 }
+
+impl TerminalMode {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Insert => "INSERT",
+            Self::Normal => "NORMAL",
+            Self::Visual => "VISUAL",
+            Self::Custom(s) => s.as_str(),
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Insert" | "INSERT" => Some(Self::Insert),
+            "Normal" | "NORMAL" => Some(Self::Normal),
+            "Visual" | "VISUAL" => Some(Self::Visual),
+            _ => Some(Self::Custom(s.to_string())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyBinding {
+    pub event: InputEvent,
+    pub action: Action,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModeDefinition {
+    pub mode: TerminalMode,
+    pub bindings: Vec<KeyBinding>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ShellEvent {
+    // Every mutation of the Screen state generates a ScreenOperation.
+    Operation(ScreenOperation),
+    // Background notifications or control signals.
+    Notification(String),
+}
+
 
 #[derive(Clone, Debug)]
 pub struct Shortcut {
@@ -64,6 +220,7 @@ pub struct ConfigUpdate {
     pub font_size: Option<f32>,
     pub default_cwd: Option<String>,
     pub directory_color: Option<TerminalColor>,
+    pub mode_definitions: Option<Vec<ModeDefinition>>,
 }
 
 pub struct ShellState {
@@ -79,4 +236,7 @@ pub struct ShellState {
     pub font_size: f32,
     pub current_dir: String,
     pub directory_color: TerminalColor,
+    pub screen: Screen,
+    pub input_buffer: String,
+    pub mode_definitions: Vec<ModeDefinition>,
 }
