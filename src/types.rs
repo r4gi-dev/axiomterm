@@ -227,6 +227,10 @@ impl Action {
                 let cmd = &s[11..s.len()-1];
                 Some(Self::RunCommand(cmd.to_string()))
             },
+            _ if s.starts_with("InsertChar(") && s.ends_with(')') => {
+                let char_str = &s[11..s.len()-1];
+                char_str.chars().next().map(Self::AppendChar)
+            },
             _ if s.len() == 1 => Some(Self::AppendChar(s.chars().next().unwrap())),
             _ => None,
         }
@@ -268,9 +272,15 @@ impl TerminalMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BindingTarget {
+    Action(Action),
+    Macro(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyBinding {
     pub event: InputEvent,
-    pub action: Action,
+    pub target: BindingTarget,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -21,6 +21,7 @@ pub struct TerminalApp {
     pub config_rx: Receiver<()>,
     pub last_reload: Instant,
     pub renderer: TerminalRenderer,
+    pub lua_engine: crate::lua_bridge::LuaEngine,
 }
 
 impl TerminalApp {
@@ -82,16 +83,16 @@ impl TerminalApp {
                 ModeDefinition {
                     mode: TerminalMode::Insert,
                     bindings: vec![
-                        KeyBinding { event: InputEvent::Key { code: "Enter".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Submit },
-                        KeyBinding { event: InputEvent::Key { code: "Backspace".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Backspace },
-                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, action: Action::ChangeMode(TerminalMode::Normal) },
+                        KeyBinding { event: InputEvent::Key { code: "Enter".to_string(), ctrl: false, alt: false, shift: false }, target: crate::types::BindingTarget::Action(Action::Submit) },
+                        KeyBinding { event: InputEvent::Key { code: "Backspace".to_string(), ctrl: false, alt: false, shift: false }, target: crate::types::BindingTarget::Action(Action::Backspace) },
+                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, target: crate::types::BindingTarget::Action(Action::ChangeMode(TerminalMode::Normal)) },
                     ],
                 },
                 ModeDefinition {
                     mode: TerminalMode::Normal,
                     bindings: vec![
-                        KeyBinding { event: InputEvent::Key { code: "I".to_string(), ctrl: false, alt: false, shift: false }, action: Action::ChangeMode(TerminalMode::Insert) },
-                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, action: Action::Clear },
+                        KeyBinding { event: InputEvent::Key { code: "I".to_string(), ctrl: false, alt: false, shift: false }, target: crate::types::BindingTarget::Action(Action::ChangeMode(TerminalMode::Insert)) },
+                        KeyBinding { event: InputEvent::Key { code: "Escape".to_string(), ctrl: false, alt: false, shift: false }, target: crate::types::BindingTarget::Action(Action::Clear) },
                     ],
                 },
             ],
@@ -107,6 +108,13 @@ impl TerminalApp {
             config_rx,
             last_reload: Instant::now(),
             renderer: TerminalRenderer::new(),
+            lua_engine: {
+                let engine = crate::lua_bridge::LuaEngine::new();
+                if let Some(path) = get_default_config_path() {
+                     let _ = engine.load_config(&path);
+                }
+                engine
+            },
         }
     }
 
@@ -185,9 +193,21 @@ impl eframe::App for TerminalApp {
 
         // Capture and process InputEvents
         // Capture and process InputEvents via extracted input module
-        let actions = crate::input::poll_and_map(ctx, &current_mode, &mode_defs);
-        for action in actions {
-            let _ = self.action_tx.send(action);
+        // Capture and process InputEvents via extracted input module
+        let targets = crate::input::poll_and_map(ctx, &current_mode, &mode_defs);
+        for target in targets {
+            match target {
+                crate::types::BindingTarget::Action(action) => {
+                    let _ = self.action_tx.send(action);
+                },
+                crate::types::BindingTarget::Macro(name) => {
+                     println!("DEBUG: Macro invoked: {}", name);
+                     let actions = self.lua_engine.resolve_macro(&name);
+                     for action in actions {
+                         let _ = self.action_tx.send(action);
+                     }
+                }
+            }
         }
 
         // Check for window title update

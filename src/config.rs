@@ -115,38 +115,35 @@ pub fn parse_config(path: &Path) -> Result<ConfigUpdate, Box<dyn std::error::Err
                                                                         }
                                                                     }
                                                                     if !key.is_empty() && !action_str.is_empty() {
-                                                                        if let Some(action) = crate::types::Action::from_str(&action_str) {
-                                                                            let mut code = key.clone();
-                                                                            let mut ctrl = false;
-                                                                            let mut alt = false;
-                                                                            let mut shift = false;
+                                                                        let target = crate::types::Action::from_str(&action_str)
+                                                                            .map(crate::types::BindingTarget::Action)
+                                                                            .unwrap_or_else(|| crate::types::BindingTarget::Macro(action_str.clone()));
 
-                                                                            // Naive modifier parsing
-                                                                            while code.len() > 1 {
-                                                                                if code.to_lowercase().starts_with("ctrl+") {
-                                                                                    ctrl = true;
-                                                                                    code = code[5..].to_string();
-                                                                                } else if code.to_lowercase().starts_with("alt+") {
-                                                                                    alt = true;
-                                                                                    code = code[4..].to_string();
-                                                                                } else if code.to_lowercase().starts_with("shift+") {
-                                                                                    shift = true;
-                                                                                    code = code[6..].to_string();
-                                                                                } else {
-                                                                                    break;
-                                                                                }
+                                                                        let mut code = key.clone();
+                                                                        let mut ctrl = false;
+                                                                        let mut alt = false;
+                                                                        let mut shift = false;
+
+                                                                        // Naive modifier parsing
+                                                                        while code.len() > 1 {
+                                                                            if code.to_lowercase().starts_with("ctrl+") {
+                                                                                ctrl = true;
+                                                                                code = code[5..].to_string();
+                                                                            } else if code.to_lowercase().starts_with("alt+") {
+                                                                                alt = true;
+                                                                                code = code[4..].to_string();
+                                                                            } else if code.to_lowercase().starts_with("shift+") {
+                                                                                shift = true;
+                                                                                code = code[6..].to_string();
+                                                                            } else {
+                                                                                break;
                                                                             }
-                                                                            
-                                                                            // Normalize code title case for single letters or standard keys if needed
-                                                                            // For now, assume user provides correct case or we rely on raw string match
-                                                                            // Basic normalization: if length is 1, maybe uppercase it?
-                                                                            // Re-using the logic from app.rs/shell.rs normalization is ideal, but for now simple pass-through
-
-                                                                            bindings.push(crate::types::KeyBinding {
-                                                                                event: crate::types::InputEvent::Key { code, ctrl, alt, shift },
-                                                                                action,
-                                                                            });
                                                                         }
+                                                                        
+                                                                        bindings.push(crate::types::KeyBinding {
+                                                                            event: crate::types::InputEvent::Key { code, ctrl, alt, shift },
+                                                                            target,
+                                                                        });
                                                                     }
                                                                 }
                                                             }
@@ -244,13 +241,13 @@ mod tests {
 
         // Check bindings
         let has_insert = def.bindings.iter().any(|b| 
-            matches!(b.action, Action::ChangeMode(TerminalMode::Insert)) && 
+            matches!(&b.target, crate::types::BindingTarget::Action(Action::ChangeMode(TerminalMode::Insert))) && 
             matches!(&b.event, InputEvent::Key { code, .. } if code == "i")
         );
         assert!(has_insert);
 
         let has_clear = def.bindings.iter().any(|b| 
-            matches!(b.action, Action::Clear) && 
+            matches!(&b.target, crate::types::BindingTarget::Action(Action::Clear)) && 
             matches!(&b.event, InputEvent::Key { code, .. } if code == "Escape")
         );
         assert!(has_clear);

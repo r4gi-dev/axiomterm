@@ -1,8 +1,8 @@
 use eframe::egui;
-use crate::types::{Action, InputEvent, ModeDefinition, TerminalMode};
+use crate::types::{Action, BindingTarget, InputEvent, ModeDefinition, TerminalMode};
 
-pub fn poll_and_map(ctx: &egui::Context, current_mode: &TerminalMode, definitions: &[ModeDefinition]) -> Vec<Action> {
-    let mut actions = Vec::new();
+pub fn poll_and_map(ctx: &egui::Context, current_mode: &TerminalMode, definitions: &[ModeDefinition]) -> Vec<BindingTarget> {
+    let mut targets = Vec::new();
     let mut events = Vec::new();
 
     // 1. Capture raw egui events and convert to InputEvents
@@ -27,16 +27,37 @@ pub fn poll_and_map(ctx: &egui::Context, current_mode: &TerminalMode, definition
         }
     });
 
-    // 2. Map InputEvents to Actions
+    // 2. Map InputEvents to BindingTargets
     for event in events {
         if let Some(def) = definitions.iter().find(|d| d.mode == *current_mode) {
-                    // matched = true; // Unused
+            for binding in &def.bindings {
+                if binding.event == event {
+                    // Prevent duplicate processing in Insert mode where TextEdit is active
+                    if *current_mode == TerminalMode::Insert {
+                        match &binding.target {
+                            BindingTarget::Action(action) => {
+                                match action {
+                                    Action::Backspace | Action::Delete | Action::MoveCursor(_, _) => {
+                                        // These are handled by TextEdit
+                                    },
+                                    _ => {
+                                        targets.push(binding.target.clone());
+                                    }
+                                }
+                            },
+                            BindingTarget::Macro(_) => {
+                                // Macros are always allowed in Insert mode (for now)
+                                targets.push(binding.target.clone());
+                            }
+                        }
+                    } else {
+                        targets.push(binding.target.clone());
+                    }
                     break; 
-            // If Text input in Insert mode and NOT matched by binding? 
-            // TextEdit handles it directly, so we typically don't emit Action::AppendChar here 
-            // unless we want to bypass TextEdit. Current architecture uses TextEdit.
+                }
+            }
         }
     }
 
-    actions
+    targets
 }

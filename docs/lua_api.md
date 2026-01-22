@@ -53,6 +53,59 @@ Lua triggers behavior by returning these strings in `bindings`.
 *   **Input**:
     *   `Submit`: Trigger command execution (Enter key).
     *   `Backspace`: Remove character.
+    *   `InsertChar(X)`: Insert a single character (used in macros).
+
+### 1.4 Macro System (Architecture 5.0)
+
+Macros allow defining **composite actions** (sequences of actions) in Lua. They are invoked via key bindings and return a list of action strings.
+
+#### Macro Definition
+
+```lua
+axiom.macros.macro_name = function()
+    return {
+        "InsertChar(H)",
+        "InsertChar(e)",
+        "Submit"
+    }
+end
+```
+
+#### Macro Invocation
+
+In mode bindings, reference the macro name as the action:
+
+```lua
+{
+    name = "Normal",
+    bindings = {
+        { key = "Ctrl+M", action = "macro_name" }
+    }
+}
+```
+
+#### Supported Action Strings in Macros
+
+All action strings from section 1.3 are supported, plus:
+*   `InsertChar(X)`: Insert character `X` (e.g., `InsertChar(A)`, `InsertChar(1)`)
+
+#### Safety Limits
+
+*   **Max Actions**: 100 actions per macro (enforced at runtime)
+*   **No Recursion**: Macros cannot call other macros
+*   **No State Access**: Macros are pure functions (no access to `ShellState`)
+
+#### Example: Save and Exit
+
+```lua
+axiom.macros.save_and_exit = function()
+    return {
+        "RunCommand(save)",
+        "ChangeMode(Normal)",
+        "Clear"
+    }
+end
+```
 
 ## 2. Deprecation Policy
 

@@ -6,6 +6,7 @@ mod utils;
 mod backend;
 mod renderer;
 mod input;
+mod lua_bridge;
 mod fixed_config;
 
 use crate::app::TerminalApp;
@@ -136,7 +137,7 @@ mod tests {
                     bindings: vec![
                         crate::types::KeyBinding { 
                             event: crate::types::InputEvent::Key { code: "Enter".to_string(), ctrl: false, alt: false, shift: false }, 
-                            action: crate::types::Action::Submit 
+                            target: crate::types::BindingTarget::Action(crate::types::Action::Submit) 
                         },
                     ],
                 },
