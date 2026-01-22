@@ -76,11 +76,26 @@ pub struct ScreenMeta {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LineImpact {
+    Single(usize),      // Affects only one specific line index
+    Multi(Vec<usize>),  // Affects specific multiple lines
+    Unbounded,          // Might affect everything or cause shifts
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OperationMetadata {
+    pub impact: LineImpact,
+    pub caused_scroll: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScreenOperation {
     PushLine(Line),
     Clear,
     #[allow(dead_code)]
     SetCursor(Cursor),
+    #[allow(dead_code)]
+    UpdateLine(usize, Line), // Visual update: row index, new content
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +112,28 @@ impl ScreenOperation {
             Self::PushLine(_) => OperationCategory::Structural,
             Self::Clear => OperationCategory::Structural,
             Self::SetCursor(_) => OperationCategory::Cursor,
+            Self::UpdateLine(_, _) => OperationCategory::Visual,
+        }
+    }
+
+    pub fn metadata(&self) -> OperationMetadata {
+        match self {
+            Self::PushLine(_) => OperationMetadata {
+                impact: LineImpact::Unbounded,
+                caused_scroll: true,
+            },
+            Self::Clear => OperationMetadata {
+                impact: LineImpact::Unbounded,
+                caused_scroll: true,
+            },
+            Self::SetCursor(_) => OperationMetadata {
+                impact: LineImpact::Single(0), // Cursor layer logic handles this, effectively "Single" (affects one row visually) but separate layer
+                caused_scroll: false,
+            },
+            Self::UpdateLine(row, _) => OperationMetadata {
+                impact: LineImpact::Single(*row),
+                caused_scroll: false,
+            },
         }
     }
 }
@@ -132,6 +169,31 @@ impl Screen {
         self.cursor = cursor;
         self.meta.dirty = true;
         ScreenOperation::SetCursor(cursor)
+    }
+
+    #[allow(dead_code)]
+    pub fn update_line(&mut self, row: usize, line: Line) -> ScreenOperation {
+        if row < self.lines.len() {
+            self.lines[row] = line.clone();
+            self.meta.dirty = true;
+            ScreenOperation::UpdateLine(row, line)
+        } else {
+            // If out of bounds, maybe just ignore or push? For now, strict update.
+            // Returning NoOp essentially if we had one. But ScreenOperation must be valid.
+            // Fallback to push if row == len?
+             if row == self.lines.len() {
+                self.push_line(line)
+             } else {
+                 // Invalid update, treat as force refresh or ignore.
+                 // Let's return Clear as "Something went wrong" or just ignore safely?
+                 // Ideally we shouldn't panic. Let's assume caller checks bounds.
+                 // For safety in this conceptual phase, let's just push it to be safe (Structural)
+                 // or better, do nothing effectively by sending a dummy update?
+                 // Implementation detail: for now, assume valid.
+                self.lines.push(line.clone());
+                ScreenOperation::PushLine(line)
+             }
+        }
     }
 }
 

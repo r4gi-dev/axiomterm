@@ -4,6 +4,8 @@ mod shell;
 mod types;
 mod utils;
 mod backend;
+mod renderer;
+mod input;
 mod fixed_config;
 
 use crate::app::TerminalApp;

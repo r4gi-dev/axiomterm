@@ -52,6 +52,64 @@ To optimize rendering, we classify every `ScreenOperation` into a category that 
 1.  Introduce standard "Dirty Rect" tracking in the Receiver.
 2.  Use `egui`'s `Area` or fine-grained painting if possible.
 
-## 4. Contract with `Shell`
-
 The `Shell` guarantees that `ScreenOperation`s are atomic and sequential. The Renderer guarantees that applying these operations sequentially to a local cache will result in an identical state to the Shell's `Screen`.
+
+## 5. Visual Partial Invalidation Architecture (Phase 4-6)
+
+This phase aims to enable "Row-based Partial Invalidation" safely.
+
+### 5.1 Operation Metadata & Line Impact
+
+We extend `ScreenOperation` (or wrap it) to provide metadata about its scope.
+
+```rust
+pub enum LineImpact {
+    Single(usize),      // Affects only one specific line index
+    Multi(Vec<usize>),  // Affects specific multiple lines (rare)
+    Unbounded,          // Might affect everything or cause shifts (Clear, Resize, Scroll)
+}
+
+pub struct OperationMetadata {
+    pub impact: LineImpact,
+    pub caused_scroll: bool,
+}
+```
+
+### 5.2 Classification Strategy
+
+| Operation | Impact Classification | Reasoning |
+| :--- | :--- | :--- |
+| `CharUpdate` / `ColorChange` | `Single(row)` | Content only. No layout shift. |
+| `PushLine` | `Unbounded` | Causes scroll shift. All cache indices become invalid. |
+| `Clear` | `Unbounded` | Everything changes. |
+| `SetCursor` | `Single` (Cursor Layer) | Handled by Cursor Layer Optimization. |
+
+### 5.3 Dirty Detection (Step 2)
+
+The Renderer will maintain a `dirty_line_count` metric.
+- On `Single(row)`: `dirty_line_count += 1`.
+- On `Unbounded`: `dirty_line_count = SCREEN_HEIGHT` (effectively infinite).
+
+### 5.4 LineRenderCache Concept (Step 3)
+
+Instead of `Vec<egui::Shape>`, we move to:
+
+```rust
+struct LineRenderCache {
+    line_index: usize,
+    shapes: Vec<egui::Shape>,
+    version: u64, // To track updates
+}
+
+// In App
+screen_cache: Vec<Option<LineRenderCache>>, // sparse or full
+```
+
+### 5.5 Safety Nets (Trigger Full Repaint)
+
+If any of these occur, drop all optimization and `request_repaint()`:
+1.  `dirty_line_count > 1` (Initially, start with simplest case).
+2.  Window resize.
+3.  Font change.
+4.  Mode change.
+5.  `Unbounded` operation received.

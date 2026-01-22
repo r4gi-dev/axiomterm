@@ -11,6 +11,8 @@ use crate::utils::get_default_config_path;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::time::{Duration, Instant};
 
+use crate::renderer::TerminalRenderer;
+
 pub struct TerminalApp {
     pub shell_state: Arc<Mutex<ShellState>>,
     pub action_tx: Sender<Action>,
@@ -18,11 +20,7 @@ pub struct TerminalApp {
     pub _watcher: Option<RecommendedWatcher>,
     pub config_rx: Receiver<()>,
     pub last_reload: Instant,
-    pub metrics: RenderMetrics,
-    pub cursor_optimization_mode: bool,
-    pub screen_cache: Option<Vec<egui::Shape>>,
-    pub last_render_dims: (f32, f32), // Width, Height
-    pub cached_origin: egui::Pos2,
+    pub renderer: TerminalRenderer,
 }
 
 impl TerminalApp {
@@ -108,38 +106,11 @@ impl TerminalApp {
             _watcher: watcher,
             config_rx,
             last_reload: Instant::now(),
-            metrics: RenderMetrics::default(),
-            cursor_optimization_mode: true,
-            screen_cache: None,
-            last_render_dims: (0.0, 0.0),
-            cached_origin: egui::pos2(0.0, 0.0),
+            renderer: TerminalRenderer::new(),
         }
     }
 
-    fn map_input(&self, event: &InputEvent, mode: &TerminalMode) -> Option<Action> {
-        let s = self.shell_state.lock().unwrap();
-        
-        // Find definition for current mode
-        if let Some(def) = s.mode_definitions.iter().find(|d| d.mode == *mode) {
-            for binding in &def.bindings {
-                if binding.event == *event {
-                    // Prevent duplicate processing in Insert mode where TextEdit is active
-                    if *mode == TerminalMode::Insert {
-                        match binding.action {
-                            Action::Backspace | Action::Delete | Action::MoveCursor(_, _) => return None,
-                            _ => return Some(binding.action.clone()),
-                        }
-                    }
-                    return Some(binding.action.clone());
-                }
-            }
-        }
-
-        // Fallback for Insert mode text handling is REMOVED to prevent duplicate input.
-        // TextEdit handles character insertion directly into the buffer.
-        
-        None
-    }
+    // map_input has been moved into the input module
 }
 
 impl From<TerminalColor> for egui::Color32 {
@@ -148,37 +119,17 @@ impl From<TerminalColor> for egui::Color32 {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct RenderMetrics {
-    pub structural_ops: usize,
-    pub visual_ops: usize,
-    pub cursor_ops: usize,
-}
-
 impl TerminalApp {
     fn on_structural_change(&mut self, ctx: &egui::Context, _op: &ScreenOperation) {
-        self.metrics.structural_ops += 1;
-        // Invalidate cache on structural changes
-        self.screen_cache = None;
-        println!("DEBUG: [Structural] Re-layout triggered. Total: {}", self.metrics.structural_ops);
-        // Structural changes require full repaint for now
-        ctx.request_repaint();
+        self.renderer.on_structural_change(ctx);
     }
 
-    fn on_visual_change(&mut self, ctx: &egui::Context, _op: &ScreenOperation) {
-        self.metrics.visual_ops += 1;
-        // Invalidate cache on visual changes
-        self.screen_cache = None;
-        println!("DEBUG: [Visual] Paint update. Total: {}", self.metrics.visual_ops);
-        // Visual changes currently trigger full repaint (optimization pending)
-        ctx.request_repaint();
+    fn on_visual_change(&mut self, ctx: &egui::Context, op: &ScreenOperation) {
+        self.renderer.on_visual_change(ctx, op);
     }
 
     fn on_cursor_change(&mut self, ctx: &egui::Context, _op: &ScreenOperation) {
-        self.metrics.cursor_ops += 1;
-        println!("DEBUG: [Cursor] Cursor update. Total: {}", self.metrics.cursor_ops);
-        // Cursor changes currently trigger full repaint (optimization pending)
-        ctx.request_repaint();
+        self.renderer.on_cursor_change(ctx);
     }
 }
 
@@ -215,7 +166,8 @@ impl eframe::App for TerminalApp {
         }
 
         // Fetch state for interpretation and rendering
-        let (current_mode, _shortcuts, opacity, font_size, current_dir, text_color, dir_color) = {
+        // Fetch state for interpretation and rendering
+        let (current_mode, _shortcuts, opacity, font_size, current_dir, text_color, dir_color, prompt_text, prompt_color, mode_defs) = {
             let s = self.shell_state.lock().unwrap();
             (
                 s.mode.clone(),
@@ -225,36 +177,17 @@ impl eframe::App for TerminalApp {
                 s.current_dir.clone(),
                 s.text_color,
                 s.directory_color,
+                s.prompt.clone(),
+                s.prompt_color,
+                s.mode_definitions.clone(),
             )
         };
 
         // Capture and process InputEvents
-        let mut events = Vec::new();
-        ctx.input(|i| {
-            for event in &i.events {
-                match event {
-                    egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                        events.push(InputEvent::Key {
-                            code: format!("{:?}", key),
-                            ctrl: modifiers.command, // command maps to ctrl on Windows/Linux, cmd on Mac
-                            alt: modifiers.alt,
-                            shift: modifiers.shift,
-                        });
-                    }
-                    egui::Event::Text(text) => {
-                        if !text.is_empty() {
-                            events.push(InputEvent::Text(text.clone()));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        for event in events {
-            if let Some(action) = self.map_input(&event, &current_mode) {
-                let _ = self.action_tx.send(action);
-            }
+        // Capture and process InputEvents via extracted input module
+        let actions = crate::input::poll_and_map(ctx, &current_mode, &mode_defs);
+        for action in actions {
+            let _ = self.action_tx.send(action);
         }
 
         // Check for window title update
@@ -293,115 +226,32 @@ impl eframe::App for TerminalApp {
                 (opacity.clamp(0.0, 1.0) * 255.0) as u8,
             )))
             .show(ctx, |ui| {
-                ui.style_mut().visuals.extreme_bg_color = egui::Color32::BLACK;
-                ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLACK;
-
-                // Safety Net: Check for window size change
-                let curr_dims = (ui.available_width(), ui.available_height());
-                if curr_dims != self.last_render_dims {
-                    self.screen_cache = None;
-                    self.last_render_dims = curr_dims;
+                // Delegate rendering to renderer
+                {
+                    let state = self.shell_state.lock().unwrap();
+                    self.renderer.draw(ui, &state);
                 }
 
-                // Temporary: Enforce no optimization until fully ready
-                // self.cursor_optimization_mode = true; // Uncomment to enable
-                if !self.cursor_optimization_mode {
-                    self.screen_cache = None;
-                }
+                // Current Prompt/Input Line
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(&prompt_text)
+                            .color(egui::Color32::from(prompt_color))
+                            .strong(),
+                    );
 
-                let (prompt_text, prompt_color, mode, lines, cursor) = {
-                    let s = self.shell_state.lock().unwrap();
-                    (
-                        s.prompt.clone(),
-                        s.prompt_color,
-                        s.mode.clone(),
-                        s.screen.lines.clone(),
-                        s.screen.cursor,
-                    )
-                };
+                    let mut s = self.shell_state.lock().unwrap();
+                    let text_edit = egui::TextEdit::singleline(&mut s.input_buffer)
+                        .desired_width(ui.available_width())
+                        .frame(false)
+                        .text_color(egui::Color32::WHITE)
+                        .lock_focus(true);
 
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        // History (Screen Lines)
-                        let font_id = egui::FontId::monospace(font_size);
-                        
-                        // 1. Calculate metrics (Scope painter drop)
-                        let (row_height, char_width) = {
-                            let painter = ui.painter();
-                            let char_dims = painter.layout_no_wrap("A".to_string(), font_id.clone(), egui::Color32::WHITE).size();
-                            (char_dims.y, char_dims.x)
-                        };
-
-                        // 2. Check Safety Nets (Origin/Scroll)
-                        let curr_origin = ui.cursor().min;
-                        if curr_origin != self.cached_origin {
-                             self.screen_cache = None;
-                             self.cached_origin = curr_origin;
-                        }
-
-                        // 3. Rebuild Cache if needed
-                        if self.screen_cache.is_none() {
-                            let painter = ui.painter();
-                            let mut shapes = Vec::new();
-                            let mut y = ui.cursor().min.y;
-
-                             for line in &lines {
-                                let mut x = ui.cursor().min.x;
-                                for cell in &line.cells {
-                                    let color = egui::Color32::from(cell.fg);
-                                    let galley = painter.layout_no_wrap(cell.ch.to_string(), font_id.clone(), color);
-                                    let rect = egui::Rect::from_min_size(egui::pos2(x, y), galley.size());
-                                    
-                                    shapes.push(egui::Shape::galley(rect.min, galley, color));
-                                    x += rect.width();
-                                }
-                                y += row_height;
-                            }
-                            self.screen_cache = Some(shapes);
-                        }
-
-                        // 4. Draw Cache
-                        if let Some(shapes) = &self.screen_cache {
-                            ui.painter().extend(shapes.iter().cloned());
-                        }
-
-                        // 5. Allocate Space (Mutable borrow)
-                        let (_id, allocated_rect) = ui.allocate_space(egui::vec2(ui.available_width(), row_height * lines.len() as f32));
-                        
-                        // 6. Draw Cursor Layer
-                        let cursor_rect = egui::Rect::from_min_size(
-                            egui::pos2(
-                                allocated_rect.min.x + cursor.col as f32 * char_width,
-                                allocated_rect.min.y + cursor.row as f32 * row_height
-                            ),
-                            egui::vec2(char_width, row_height)
-                        );
-                        ui.painter().rect_filled(cursor_rect, 0.0, egui::Color32::from_white_alpha(100)); // Semi-transparent cursor
-
-                        // Current Prompt/Input Line
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(prompt_text)
-                                    .color(egui::Color32::from(prompt_color))
-                                    .strong(),
-                            );
-
-                            let mut s = self.shell_state.lock().unwrap();
-                            let text_edit = egui::TextEdit::singleline(&mut s.input_buffer)
-                                .desired_width(ui.available_width())
-                                .frame(false)
-                                .text_color(egui::Color32::WHITE)
-                                .lock_focus(true);
-
-                            let re = ui.add(text_edit);
-                            // We don't need to manually send enter here anymore as it's handled by map_input -> Action::Submit
-                            if mode == TerminalMode::Insert {
-                                re.request_focus();
-                            }
-                        });
-                    });
+                    let re = ui.add(text_edit);
+                    if current_mode == TerminalMode::Insert {
+                        re.request_focus();
+                    }
+                });
             });
 
         ctx.request_repaint();
