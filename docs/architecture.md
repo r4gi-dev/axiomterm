@@ -58,3 +58,71 @@ Actions are the **only** mechanism by which the ShellState is mutated. They defi
 (Detailed API surface will be defined in `docs/lua_api.md`)
 
 *   **Principle**: "If it's not an Action, Lua can't do it."
+
+---
+
+## 4. Undo/Redo Architecture (Architecture 6.0)
+
+### 4.1 Purpose
+
+Undo/Redo is **proof of state machine completeness**, not a convenience feature.
+
+**Guarantees**:
+- State transitions are **reversible**
+- Macro/Action/ScreenOperation hierarchy remains **intact**
+- Truth Layer (Rust) remains **unpolluted**
+
+### 4.2 Core Principles
+
+#### Undo Reverses Transitions, Not State
+
+Undo does **not** save/restore Screen snapshots. Only **changes** are recorded.
+
+**Forbidden**:
+- Screen snapshots
+- Renderer state
+- Lua state
+
+**Allowed**:
+- State transitions
+- Operation sequences
+- Intent-preserving units
+
+#### Undo is Truth Layer Responsibility
+
+- Undo/Redo completes **within ShellState**
+- Lua/Renderer/Adapter are **unaware** of Undo
+- Lua **cannot** invoke Undo directly
+
+### 4.3 Undo Granularity
+
+**Undo unit = Action Transaction**
+
+| Event | Transaction Scope |
+|-------|-------------------|
+| Normal key input | 1 Action = 1 Transaction |
+| **Macro execution** | **Entire Macro = 1 Transaction** |
+| External process output | **Not undoable** |
+| Config reload | **Not undoable** |
+
+### 4.4 Reversible Operations
+
+All `ScreenOperation`s must have logical inverse pairs:
+
+```
+PushLine ⇄ PopLine
+UpdateLine(old → new) ⇄ UpdateLine(new → old)
+CursorMove(from → to) ⇄ CursorMove(to → from)
+```
+
+**Responsibility**: `ShellState`, not `Renderer`
+
+### 4.5 Macro Metrics and Undo
+
+**Macro Metrics** is a **design observation structure** and does **not** affect macro execution semantics.
+
+- Metrics record macro invocations and action counts
+- Undo/Redo does **not** generate Metrics
+- Metrics does **not** affect Undo/Redo
+
+**Reference**: See [undo_architecture.md](undo_architecture.md) for complete specification.

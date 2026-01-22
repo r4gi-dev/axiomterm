@@ -201,10 +201,19 @@ impl eframe::App for TerminalApp {
                     let _ = self.action_tx.send(action);
                 },
                 crate::types::BindingTarget::Macro(name) => {
-                     println!("DEBUG: Macro invoked: {}", name);
-                     let actions = self.lua_engine.resolve_macro(&name);
-                     for action in actions {
-                         let _ = self.action_tx.send(action);
+                     match self.lua_engine.resolve_macro(&name) {
+                         Ok(actions) => {
+                             println!("DEBUG: Macro '{}' resolved to {} actions", name, actions.len());
+                             for action in actions {
+                                 let _ = self.action_tx.send(action);
+                             }
+                         },
+                         Err(e) => {
+                             // User-facing error message
+                             eprintln!("Error: {}", e);
+                             // Detailed debug log
+                             println!("DEBUG: Macro error details: {:?}", e);
+                         }
                      }
                 }
             }
