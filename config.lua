@@ -16,4 +16,17 @@ config.keys = {
     { key = "q", cmd = "exit" }, -- Leader-like quit
 }
 
+-- Mode Definitions (Example)
+config.modes = {
+    {
+        name = "Normal",
+        bindings = {
+            { key = "i", action = "ChangeMode(Insert)" },
+            { key = "Escape", action = "Clear" },
+            { key = "h", action = "MoveCursor(0, -1)" },
+            { key = "l", action = "MoveCursor(0, 1)" },
+        }
+    }
+}
+
 return config

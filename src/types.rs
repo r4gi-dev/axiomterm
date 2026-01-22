@@ -81,6 +81,23 @@ pub enum ScreenOperation {
     SetCursor(Cursor),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationCategory {
+    Structural, // Affects layout (scroll, resize, clear)
+    Visual,     // Affects content only (no layout shift)
+    Cursor,     // Affects cursor layer only
+}
+
+impl ScreenOperation {
+    pub fn category(&self) -> OperationCategory {
+        match self {
+            Self::PushLine(_) => OperationCategory::Structural,
+            Self::Clear => OperationCategory::Structural,
+            Self::SetCursor(_) => OperationCategory::Cursor,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Screen {
     pub lines: Vec<Line>,
