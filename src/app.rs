@@ -70,9 +70,9 @@ impl TerminalApp {
             prompt_color: TerminalColor::GREEN,
             text_color: TerminalColor::LIGHT_GRAY,
             window_title_base: "axiomterm".to_string(),
-            window_title_full: "[INSERT] axiomterm".to_string(),
+            window_title_full: format!("[{}] {}", initial_mode.name(), "axiomterm"),
             title_updated: false,
-            mode: TerminalMode::Insert,
+            mode: initial_mode,
             shortcuts: Vec::new(),
             opacity: 1.0,
             font_size: 14.0,
@@ -123,20 +123,21 @@ impl TerminalApp {
         if let Some(def) = s.mode_definitions.iter().find(|d| d.mode == *mode) {
             for binding in &def.bindings {
                 if binding.event == *event {
+                    // Prevent duplicate processing in Insert mode where TextEdit is active
+                    if *mode == TerminalMode::Insert {
+                        match binding.action {
+                            Action::Backspace | Action::Delete | Action::MoveCursor(_, _) => return None,
+                            _ => return Some(binding.action.clone()),
+                        }
+                    }
                     return Some(binding.action.clone());
                 }
             }
         }
 
-        // Fallback or Insert mode text handling
-        if *mode == TerminalMode::Insert {
-            if let InputEvent::Text(s) = event {
-                if let Some(ch) = s.chars().next() {
-                    return Some(Action::AppendChar(ch));
-                }
-            }
-        }
-
+        // Fallback for Insert mode text handling is REMOVED to prevent duplicate input.
+        // TextEdit handles character insertion directly into the buffer.
+        
         None
     }
 }
@@ -185,7 +186,12 @@ impl eframe::App for TerminalApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll for new events (Operations are the primary driver of state changes)
         // Check for config file changes
-        if let Ok(_) = self.config_rx.try_recv() {
+        let mut config_updated = false;
+        while let Ok(_) = self.config_rx.try_recv() {
+            config_updated = true;
+        }
+
+        if config_updated {
             if self.last_reload.elapsed() > Duration::from_millis(500) {
                 let _ = self.action_tx.send(Action::RunCommand("config load".to_string()));
                 self.last_reload = Instant::now();
@@ -362,13 +368,13 @@ impl eframe::App for TerminalApp {
                         }
 
                         // 5. Allocate Space (Mutable borrow)
-                        ui.allocate_space(egui::vec2(ui.available_width(), row_height * lines.len() as f32));
+                        let (_id, allocated_rect) = ui.allocate_space(egui::vec2(ui.available_width(), row_height * lines.len() as f32));
                         
                         // 6. Draw Cursor Layer
                         let cursor_rect = egui::Rect::from_min_size(
                             egui::pos2(
-                                ui.cursor().min.x + cursor.col as f32 * char_width,
-                                ui.cursor().min.y + cursor.row as f32 * row_height
+                                allocated_rect.min.x + cursor.col as f32 * char_width,
+                                allocated_rect.min.y + cursor.row as f32 * row_height
                             ),
                             egui::vec2(char_width, row_height)
                         );

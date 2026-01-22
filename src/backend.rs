@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use crate::types::ShellState;
 
 pub trait ProcessHandle: Send + Sync {
+    #[allow(dead_code)]
     fn wait(&mut self) -> std::io::Result<()>;
+    #[allow(dead_code)]
     fn kill(&mut self) -> std::io::Result<()>;
 }
 
@@ -19,6 +21,7 @@ pub trait ProcessBackend: Send + Sync {
 }
 
 pub struct StdProcessHandle {
+    #[allow(dead_code)]
     pub child: std::process::Child,
 }
 

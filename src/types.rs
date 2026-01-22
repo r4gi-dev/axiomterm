@@ -52,6 +52,7 @@ pub struct Line {
 }
 
 impl Line {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self { cells: Vec::new() }
     }
@@ -78,12 +79,14 @@ pub struct ScreenMeta {
 pub enum ScreenOperation {
     PushLine(Line),
     Clear,
+    #[allow(dead_code)]
     SetCursor(Cursor),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationCategory {
     Structural, // Affects layout (scroll, resize, clear)
+    #[allow(dead_code)]
     Visual,     // Affects content only (no layout shift)
     Cursor,     // Affects cursor layer only
 }
@@ -106,6 +109,7 @@ pub struct Screen {
 }
 
 impl Screen {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -123,6 +127,7 @@ impl Screen {
         ScreenOperation::Clear
     }
 
+    #[allow(dead_code)]
     pub fn set_cursor(&mut self, cursor: Cursor) -> ScreenOperation {
         self.cursor = cursor;
         self.meta.dirty = true;
@@ -137,6 +142,7 @@ pub enum Action {
     Delete,
     Submit,          // Typically Enter
     Clear,           // Clear screen
+    #[allow(dead_code)]
     MoveCursor(i32, i32), // Delta move
     ChangeMode(TerminalMode),
     RunCommand(String),
@@ -216,11 +222,13 @@ pub enum ShellEvent {
     // Every mutation of the Screen state generates a ScreenOperation.
     Operation(ScreenOperation),
     // Background notifications or control signals.
+    #[allow(dead_code)]
     Notification(String),
 }
 
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Shortcut {
     pub key: String,
     pub cmd: String,

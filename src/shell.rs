@@ -4,8 +4,8 @@ use crate::backend::ProcessBackend;
 use crate::utils::{get_default_config_path, tokenize_command};
 use crossbeam_channel::{Receiver, Sender};
 use std::env;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+// use std::io; // Removed unused import
+// use std::process::{Command, Stdio}; // Removed unused imports
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::SystemTime;
